@@ -1,6 +1,7 @@
 package coop.rchain.rspace
 
 import cats.Id
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.rspace.internal._
 
 import scala.collection.SortedSet
@@ -28,13 +29,13 @@ trait ISpace[F[_], C, P, A, K] extends Tuplespace[F, C, P, A, K] {
     *
     * @return A [[Checkpoint]]
     */
-  def createCheckpoint(): F[Checkpoint]
+  def createCheckpoint()(implicit traceId: TraceId): F[Checkpoint]
 
   /** Resets the store to the given root.
     *
     * @param root A BLAKE2b256 Hash representing the checkpoint
     */
-  def reset(root: Blake2b256Hash): F[Unit]
+  def reset(root: Blake2b256Hash)(implicit traceId: TraceId): F[Unit]
 
   def getData(channel: C): F[Seq[Datum[A]]]
 
@@ -42,7 +43,7 @@ trait ISpace[F[_], C, P, A, K] extends Tuplespace[F, C, P, A, K] {
 
   /** Clears the store.  Does not affect the history trie.
     */
-  def clear(): F[Unit]
+  def clear()(implicit traceId: TraceId): F[Unit]
 
   // TODO: this should not be exposed
   def toMap: F[Map[Seq[C], Row[P, A, K]]]
@@ -52,12 +53,14 @@ trait ISpace[F[_], C, P, A, K] extends Tuplespace[F, C, P, A, K] {
     This operation is significantly faster than {@link #createCheckpoint()} because the computationally
     expensive operation of creating the history trie is avoided.
     */
-  def createSoftCheckpoint(): F[SoftCheckpoint[C, P, A, K]]
+  def createSoftCheckpoint()(implicit traceId: TraceId): F[SoftCheckpoint[C, P, A, K]]
 
   /**
     Reverts the ISpace to the state checkpointed using {@link #createSoftCheckpoint()}
     */
-  def revertToSoftCheckpoint(checkpoint: SoftCheckpoint[C, P, A, K]): F[Unit]
+  def revertToSoftCheckpoint(checkpoint: SoftCheckpoint[C, P, A, K])(
+      implicit traceId: TraceId
+  ): F[Unit]
 }
 
 //TODO lookinto to removing  ISpace object.

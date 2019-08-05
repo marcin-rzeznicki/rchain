@@ -9,6 +9,7 @@ import cats.temp.par.Par
 import com.google.common.collect.Multiset
 import com.typesafe.scalalogging.Logger
 import coop.rchain.catscontrib._
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.rspace.history.{Branch, HistoryRepository}
 import coop.rchain.rspace.internal._
@@ -50,7 +51,7 @@ class ReplayRSpace[F[_]: Sync, C, P, A, K](
   private[this] val consumeCommLabel = "comm.consume"
   private[this] val produceCommLabel = "comm.produce"
 
-  def consume(
+  override def consume(
       channels: Seq[C],
       patterns: Seq[P],
       continuation: K,
@@ -62,7 +63,7 @@ class ReplayRSpace[F[_]: Sync, C, P, A, K](
       if (channels.length =!= patterns.length) {
         val msg = "channels.length must equal patterns.length"
         logF.error(msg) >> syncF.raiseError(new IllegalArgumentException(msg))
-      } else
+      } else {
         for {
           _ <- spanF.mark("before-consume-lock")
           result <- consumeLockF(channels) {
@@ -77,6 +78,7 @@ class ReplayRSpace[F[_]: Sync, C, P, A, K](
                    }
           _ <- spanF.mark("post-consume-lock")
         } yield result
+      }
     }
 
   private[this] def lockedConsume(
@@ -424,17 +426,19 @@ class ReplayRSpace[F[_]: Sync, C, P, A, K](
     }
   }
 
-  override def createCheckpoint(): F[Checkpoint] = checkReplayData >> syncF.defer {
-    for {
-      changes     <- storeAtom.get().changes()
-      nextHistory <- historyRepositoryAtom.get().checkpoint(changes.toList)
-      _           = historyRepositoryAtom.set(nextHistory)
-      _           <- createNewHotStore(nextHistory)(serializeK.toCodec)
-      _           <- restoreInstalls()
-    } yield (Checkpoint(nextHistory.history.root, Seq.empty))
-  }
+  override def createCheckpoint()(implicit traceId: TraceId): F[Checkpoint] =
+    checkReplayData >> syncF.defer {
+      for {
+        changes     <- storeAtom.get().changes()
+        nextHistory <- historyRepositoryAtom.get().checkpoint(changes.toList)
+        _           = historyRepositoryAtom.set(nextHistory)
+        _           <- createNewHotStore(nextHistory)(serializeK.toCodec)
+        _           <- restoreInstalls()(traceId)
+      } yield (Checkpoint(nextHistory.history.root, Seq.empty))
+    }
 
-  override def clear(): F[Unit] = syncF.delay { replayData.clear() } >> super.clear()
+  override def clear()(implicit traceId: TraceId): F[Unit] =
+    syncF.delay { replayData.clear() } >> super.clear()
 
   protected[rspace] def isDirty(root: Blake2b256Hash): F[Boolean] = true.pure[F]
 }

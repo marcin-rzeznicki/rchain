@@ -9,6 +9,7 @@ import cats.temp.par.Par
 import com.typesafe.scalalogging.Logger
 import coop.rchain.catscontrib._
 import coop.rchain.metrics.Metrics.Source
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.rspace.history.{Branch, HistoryRepository}
 import coop.rchain.rspace.internal._
@@ -416,7 +417,7 @@ class RSpace[F[_], C, P, A, K] private[rspace] (
       } yield result
     }
 
-  override def createCheckpoint(): F[Checkpoint] =
+  override def createCheckpoint()(implicit traceId: TraceId): F[Checkpoint] =
     for {
       changes     <- storeAtom.get().changes()
       nextHistory <- historyRepositoryAtom.get().checkpoint(changes.toList)
