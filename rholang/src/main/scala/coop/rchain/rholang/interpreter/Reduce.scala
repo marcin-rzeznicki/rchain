@@ -9,7 +9,9 @@ import cats.{Eval => _}
 import com.google.protobuf.ByteString
 import coop.rchain.crypto.codec.Base16
 import coop.rchain.crypto.hash.Blake2b512Random
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.Metrics.Source
+import coop.rchain.metrics.Span.TraceId
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
 import coop.rchain.models.Var.VarInstance
@@ -46,14 +48,14 @@ trait Reduce[M[_]] {
       par: Par
   )(implicit env: Env[Par], rand: Blake2b512Random, sequenceNumber: Int = 0): M[Unit]
 
-  def inj(par: Par)(implicit rand: Blake2b512Random): M[Unit]
+  def inj(par: Par)(implicit rand: Blake2b512Random, traceId: TraceId): M[Unit]
 
   /**
     * Evaluate any top level expressions in @param Par .
     */
-  def evalExpr(par: Par)(implicit env: Env[Par]): M[Par]
+  def evalExpr(par: Par)(implicit env: Env[Par], traceId: TraceId): M[Par]
 
-  def evalExprToPar(expr: Expr)(implicit env: Env[Par]): M[Par]
+  def evalExprToPar(expr: Expr)(implicit env: Env[Par], traceId: TraceId): M[Par]
 }
 
 class DebruijnInterpreter[M[_], F[_]](
@@ -95,16 +97,16 @@ class DebruijnInterpreter[M[_], F[_]](
       data: ListParWithRandom,
       persistent: Boolean,
       sequenceNumber: Int
-  ): M[Unit] = {
+  )(implicit traceId: TraceId): M[Unit] = {
     def go(res: Application): M[Unit] =
       res match {
         case Some((continuation, dataList, updatedSequenceNumber, peek)) =>
           if (persistent && !peek)
             List(
-              dispatcher.dispatch(continuation, dataList, updatedSequenceNumber),
+              dispatcher.dispatch(continuation, dataList, updatedSequenceNumber)(traceId),
               produce(chan, data, persistent, sequenceNumber)
             ).parSequence_
-          else dispatcher.dispatch(continuation, dataList, updatedSequenceNumber)
+          else dispatcher.dispatch(continuation, dataList, updatedSequenceNumber)(traceId)
         case None => syncM.unit
       }
     space.produce(chan, data, persist = persistent, sequenceNumber) >>= (go(_))
@@ -125,17 +127,17 @@ class DebruijnInterpreter[M[_], F[_]](
       persistent: Boolean,
       peek: Boolean,
       sequenceNumber: Int
-  ): M[Unit] = {
+  )(implicit traceId: TraceId): M[Unit] = {
     val (patterns: Seq[BindPattern], sources: Seq[Par]) = binds.unzip
     def go(res: Application): M[Unit] =
       res match {
         case Some((continuation, dataList, updatedSequenceNumber, _)) =>
           if (persistent)
             List(
-              dispatcher.dispatch(continuation, dataList, updatedSequenceNumber),
+              dispatcher.dispatch(continuation, dataList, updatedSequenceNumber)(traceId),
               consume(binds, body, persistent, peek, sequenceNumber)
             ).parSequence_
-          else dispatcher.dispatch(continuation, dataList, updatedSequenceNumber)
+          else dispatcher.dispatch(continuation, dataList, updatedSequenceNumber)(traceId)
         case None => syncM.unit
       }
     space.consume(
@@ -151,7 +153,8 @@ class DebruijnInterpreter[M[_], F[_]](
   override def eval(par: Par)(
       implicit env: Env[Par],
       rand: Blake2b512Random,
-      sequenceNumber: Int
+      sequenceNumber: Int,
+      traceId: TraceId
   ): M[Unit] = spanM.mark(parSpanLabel) >> {
 
     // for lack of a better type...
@@ -233,8 +236,8 @@ class DebruijnInterpreter[M[_], F[_]](
 
   override def inj(
       par: Par
-  )(implicit rand: Blake2b512Random): M[Unit] =
-    spanM.mark(injectSpanLabel) >> eval(par)(Env[Par](), rand, 0)
+  )(implicit rand: Blake2b512Random, traceId: TraceId): M[Unit] =
+    spanM.mark(injectSpanLabel) >> eval(par)(Env[Par](), rand, 0, traceId)
 
   /** Algorithm as follows:
     *
@@ -252,7 +255,8 @@ class DebruijnInterpreter[M[_], F[_]](
   private def eval(send: Send)(
       implicit env: Env[Par],
       rand: Blake2b512Random,
-      sequenceNumber: Int
+      sequenceNumber: Int,
+      traceId: TraceId
   ): M[Unit] =
     spanM.mark(sendSpanLabel) >> {
       for {
@@ -275,7 +279,8 @@ class DebruijnInterpreter[M[_], F[_]](
   private def eval(receive: Receive)(
       implicit env: Env[Par],
       rand: Blake2b512Random,
-      sequenceNumber: Int
+      sequenceNumber: Int,
+      traceId: TraceId
   ): M[Unit] =
     spanM.mark(receiveSpanLabel) >> {
       for {
@@ -317,7 +322,7 @@ class DebruijnInterpreter[M[_], F[_]](
     */
   private def eval(
       valproc: Var
-  )(implicit env: Env[Par]): M[Par] =
+  )(implicit env: Env[Par], traceId: TraceId): M[Par] =
     spanM.mark(varSpanLabel) >> {
       charge[M](VAR_EVAL_COST) >> {
         valproc.varInstance match {
@@ -341,7 +346,8 @@ class DebruijnInterpreter[M[_], F[_]](
   private def eval(mat: Match)(
       implicit env: Env[Par],
       rand: Blake2b512Random,
-      sequenceNumber: Int
+      sequenceNumber: Int,
+      traceId: TraceId
   ): M[Unit] = spanM.mark(matchSpanLabel) >> {
 
     def addToEnv(env: Env[Par], freeMap: Map[Int, Par], freeCount: Int): Env[Par] =
@@ -355,7 +361,10 @@ class DebruijnInterpreter[M[_], F[_]](
           )
       )
 
-    def firstMatch(target: Par, cases: Seq[MatchCase])(implicit env: Env[Par]): M[Unit] = {
+    def firstMatch(
+        target: Par,
+        cases: Seq[MatchCase]
+    )(implicit env: Env[Par], traceId: TraceId): M[Unit] = {
       def firstMatchM(
           state: (Par, Seq[MatchCase])
       ): M[Either[(Par, Seq[MatchCase]), Unit]] = {
@@ -373,7 +382,8 @@ class DebruijnInterpreter[M[_], F[_]](
                         eval(singleCase.source)(
                           addToEnv(env, freeMap, singleCase.freeCount),
                           implicitly,
-                          sequenceNumber
+                          sequenceNumber,
+                          traceId
                         ).map(_.asRight[(Par, Seq[MatchCase])])
                     }
             } yield res
@@ -401,7 +411,12 @@ class DebruijnInterpreter[M[_], F[_]](
   // TODO: Eliminate variable shadowing
   private def eval(
       neu: New
-  )(implicit env: Env[Par], rand: Blake2b512Random, sequenceNumber: Int): M[Unit] =
+  )(
+      implicit env: Env[Par],
+      rand: Blake2b512Random,
+      sequenceNumber: Int,
+      traceId: TraceId
+  ): M[Unit] =
     spanM.mark(newSpanLabel) >> {
 
       def alloc(count: Int, urns: Seq[String]): M[Env[Par]] = {
@@ -440,10 +455,12 @@ class DebruijnInterpreter[M[_], F[_]](
       }
 
       charge[M](newBindingsCost(neu.bindCount)) >>
-        alloc(neu.bindCount, neu.uri).flatMap(eval(neu.p)(_, rand, sequenceNumber))
+        alloc(neu.bindCount, neu.uri).flatMap(eval(neu.p)(_, rand, sequenceNumber, traceId))
     }
 
-  private[this] def unbundleReceive(rb: ReceiveBind)(implicit env: Env[Par]): M[Par] =
+  private[this] def unbundleReceive(
+      rb: ReceiveBind
+  )(implicit env: Env[Par], traceId: TraceId): M[Par] =
     for {
       evalSrc <- evalExpr(rb.source)
       subst   <- substituteAndCharge[Par, M](evalSrc, 0, env)
@@ -459,10 +476,15 @@ class DebruijnInterpreter[M[_], F[_]](
 
   private def eval(
       bundle: Bundle
-  )(implicit env: Env[Par], rand: Blake2b512Random, sequenceNumber: Int): M[Unit] =
+  )(
+      implicit env: Env[Par],
+      rand: Blake2b512Random,
+      sequenceNumber: Int,
+      traceId: TraceId
+  ): M[Unit] =
     spanM.mark(bundleSpanLabel) >> eval(bundle.body)
 
-  def evalExprToPar(expr: Expr)(implicit env: Env[Par]): M[Par] =
+  def evalExprToPar(expr: Expr)(implicit env: Env[Par], traceId: TraceId): M[Par] =
     spanM.mark(expressionToParSpanLabel) >> {
       expr.exprInstance match {
         case EVarBody(EVar(v)) =>
@@ -486,7 +508,7 @@ class DebruijnInterpreter[M[_], F[_]](
       }
     }
 
-  private def evalExprToExpr(expr: Expr)(implicit env: Env[Par]): M[Expr] =
+  private def evalExprToExpr(expr: Expr)(implicit env: Env[Par], traceId: TraceId): M[Expr] =
     spanM.mark(expressionToExpressionSpanLabel) >> {
       syncM.defer {
         def relop(
@@ -824,7 +846,8 @@ class DebruijnInterpreter[M[_], F[_]](
 
   private abstract class Method() {
     def apply(p: Par, args: Seq[Par])(
-        implicit env: Env[Par]
+        implicit env: Env[Par],
+        traceId: TraceId
     ): M[Par]
   }
 
@@ -834,7 +857,7 @@ class DebruijnInterpreter[M[_], F[_]](
       if (ps.isDefinedAt(nth)) ps(nth).asRight[ReduceError]
       else ReduceError("Error: index out of bound: " + nth).asLeft[Par]
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       if (args.length != 1)
         errors.MethodArgumentNumberMismatch("nth", 1, args.length).raiseError[M, Par]
       else {
@@ -869,7 +892,7 @@ class DebruijnInterpreter[M[_], F[_]](
         .fromTry(Try(Serialize[Par].encode(p).toArray))
         .leftMap(th => ReduceError(s"Error: exception thrown when serializing $p." + th.getMessage))
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       if (args.nonEmpty)
         MethodArgumentNumberMismatch("toByteArray", 0, args.length).raiseError[M, Par]
       else {
@@ -884,7 +907,7 @@ class DebruijnInterpreter[M[_], F[_]](
 
   private[this] val hexToBytes: Method = new Method() {
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       if (args.nonEmpty)
         MethodArgumentNumberMismatch("hexToBytes", 0, args.length).raiseError[M, Par]
       else {
@@ -911,7 +934,7 @@ class DebruijnInterpreter[M[_], F[_]](
 
   private[this] val toUtf8Bytes: Method = new Method() {
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       if (args.nonEmpty)
         MethodArgumentNumberMismatch("toUtf8Bytes", 0, args.length).raiseError[M, Par]
       else {
@@ -969,7 +992,7 @@ class DebruijnInterpreter[M[_], F[_]](
         case (other, _) => MethodNotDefined("union", other.typ).raiseError[M, Expr]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 1)
               MethodArgumentNumberMismatch("union", 1, args.length).raiseError[M, Unit]
@@ -997,7 +1020,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("diff", other.typ).raiseError[M, Expr]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 1)
               MethodArgumentNumberMismatch("diff", 1, args.length).raiseError[M, Unit]
@@ -1027,7 +1050,7 @@ class DebruijnInterpreter[M[_], F[_]](
         case other => MethodNotDefined("add", other.typ).raiseError[M, Expr]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 1)
               MethodArgumentNumberMismatch("add", 1, args.length).raiseError[M, Unit]
@@ -1069,7 +1092,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("delete", other.typ).raiseError[M, Expr]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 1)
               MethodArgumentNumberMismatch("delete", 1, args.length).raiseError[M, Unit]
@@ -1092,7 +1115,7 @@ class DebruijnInterpreter[M[_], F[_]](
         case other => MethodNotDefined("contains", other.typ).raiseError[M, Expr]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 1)
               MethodArgumentNumberMismatch("contains", 1, args.length).raiseError[M, Unit]
@@ -1113,7 +1136,7 @@ class DebruijnInterpreter[M[_], F[_]](
         case other => MethodNotDefined("get", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 1)
               MethodArgumentNumberMismatch("get", 1, args.length).raiseError[M, Unit]
@@ -1134,7 +1157,7 @@ class DebruijnInterpreter[M[_], F[_]](
         case other => MethodNotDefined("getOrElse", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 2)
               MethodArgumentNumberMismatch("getOrElse", 2, args.length).raiseError[M, Unit]
@@ -1156,7 +1179,7 @@ class DebruijnInterpreter[M[_], F[_]](
         case other => MethodNotDefined("set", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 2)
               MethodArgumentNumberMismatch("set", 2, args.length).raiseError[M, Unit]
@@ -1179,7 +1202,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("keys", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.nonEmpty)
               MethodArgumentNumberMismatch("keys", 0, args.length).raiseError[M, Unit]
@@ -1204,7 +1227,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("size", other.typ).raiseError[M, (Int, Par)]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.nonEmpty)
               MethodArgumentNumberMismatch("size", 0, args.length).raiseError[M, Unit]
@@ -1229,7 +1252,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("length", other.typ).raiseError[M, Expr]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.nonEmpty)
               MethodArgumentNumberMismatch("length", 0, args.length).raiseError[M, Unit]
@@ -1254,7 +1277,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("slice", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.length != 2)
               MethodArgumentNumberMismatch("slice", 2, args.length).raiseError[M, Unit]
@@ -1293,7 +1316,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("toList", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.nonEmpty)
               MethodArgumentNumberMismatch("toList", 0, args.length).raiseError[M, Unit]
@@ -1330,7 +1353,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("toSet", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.nonEmpty)
               MethodArgumentNumberMismatch("toSet", 0, args.length).raiseError[M, Unit]
@@ -1372,7 +1395,7 @@ class DebruijnInterpreter[M[_], F[_]](
           MethodNotDefined("toMap", other.typ).raiseError[M, Par]
       }
 
-    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par]): M[Par] =
+    override def apply(p: Par, args: Seq[Par])(implicit env: Env[Par], traceId: TraceId): M[Par] =
       for {
         _ <- if (args.nonEmpty)
               MethodArgumentNumberMismatch("toMap", 0, args.length).raiseError[M, Unit]
@@ -1405,7 +1428,7 @@ class DebruijnInterpreter[M[_], F[_]](
       "toMap"       -> toMap
     )
 
-  private def evalSingleExpr(p: Par)(implicit env: Env[Par]): M[Expr] =
+  private def evalSingleExpr(p: Par)(implicit env: Env[Par], traceId: TraceId): M[Expr] =
     if (p.sends.nonEmpty || p.receives.nonEmpty || p.news.nonEmpty || p.matches.nonEmpty || p.unforgeables.nonEmpty || p.bundles.nonEmpty)
       ReduceError("Error: parallel or non expression found where expression expected.")
         .raiseError[M, Expr]
@@ -1417,7 +1440,7 @@ class DebruijnInterpreter[M[_], F[_]](
 
   private def evalToLong(
       p: Par
-  )(implicit env: Env[Par]): M[Long] =
+  )(implicit env: Env[Par], traceId: TraceId): M[Long] =
     if (p.sends.nonEmpty || p.receives.nonEmpty || p.news.nonEmpty || p.matches.nonEmpty || p.unforgeables.nonEmpty || p.bundles.nonEmpty)
       ReduceError("Error: parallel or non expression found where expression expected.")
         .raiseError[M, Long]
@@ -1447,7 +1470,7 @@ class DebruijnInterpreter[M[_], F[_]](
 
   private def evalToBool(
       p: Par
-  )(implicit env: Env[Par]): M[Boolean] =
+  )(implicit env: Env[Par], traceId: TraceId): M[Boolean] =
     if (p.sends.nonEmpty || p.receives.nonEmpty || p.news.nonEmpty || p.matches.nonEmpty || p.unforgeables.nonEmpty || p.bundles.nonEmpty)
       ReduceError("Error: parallel or non expression found where expression expected.")
         .raiseError[M, Boolean]
@@ -1497,7 +1520,7 @@ class DebruijnInterpreter[M[_], F[_]](
   /**
     * Evaluate any top level expressions in @param Par .
     */
-  def evalExpr(par: Par)(implicit env: Env[Par]): M[Par] =
+  def evalExpr(par: Par)(implicit env: Env[Par], traceId: TraceId): M[Par] =
     spanM.mark(topLevelExpressionSpanLabel) >> {
       for {
         evaledExprs <- par.exprs.toList.traverse(evalExprToPar)

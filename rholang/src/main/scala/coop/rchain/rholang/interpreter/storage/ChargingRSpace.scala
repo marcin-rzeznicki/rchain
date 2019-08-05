@@ -3,6 +3,7 @@ package coop.rchain.rholang.interpreter.storage
 import cats.effect.Sync
 import cats.implicits._
 import coop.rchain.metrics.Span
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
 import coop.rchain.models._
 import coop.rchain.rholang.interpreter.Runtime.{RhoISpace, RhoTuplespace}
@@ -48,7 +49,7 @@ object ChargingRSpace {
           persist: Boolean,
           sequenceNumber: Int,
           peeks: SortedSet[Int] = SortedSet.empty[Int]
-      ): F[
+      )(implicit traceId: TraceId): F[
         Option[(ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[ListParWithRandom]])]
       ] =
         for {
@@ -68,7 +69,7 @@ object ChargingRSpace {
           channels: Seq[Par],
           patterns: Seq[BindPattern],
           continuation: TaggedContinuation
-      ): F[Option[(TaggedContinuation, Seq[ListParWithRandom])]] =
+      )(implicit traceId: TraceId): F[Option[(TaggedContinuation, Seq[ListParWithRandom])]] =
         space.install(channels, patterns, continuation)
 
       override def produce(
@@ -76,7 +77,7 @@ object ChargingRSpace {
           data: ListParWithRandom,
           persist: Boolean,
           sequenceNumber: Int
-      ): F[
+      )(implicit traceId: TraceId): F[
         Option[(ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[ListParWithRandom]])]
       ] =
         for {

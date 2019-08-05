@@ -30,13 +30,13 @@ class ContractCall[F[_]: Concurrent: Span](
     space: RhoTuplespace[F],
     dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation]
 ) {
-  type Producer = (Seq[Par], Par) => F[Unit]
+  type Producer = (Seq[Par], Par) => TraceId => F[Unit]
 
   // TODO: pass _cost[F] as an implicit parameter
   private def produce(
       rand: Blake2b512Random,
       sequenceNumber: Int
-  )(values: Seq[Par], ch: Par): F[Unit] =
+  )(values: Seq[Par], ch: Par)(traceId: TraceId): F[Unit] =
     for {
       produceResult <- space.produce(
                         ch,
@@ -46,11 +46,15 @@ class ContractCall[F[_]: Concurrent: Span](
                       )
       _ <- produceResult.fold(Sync[F].unit) {
             case (cont, channels) =>
-              dispatcher.dispatch(unpackCont(cont), channels.map(_.value), cont.sequenceNumber)
+              dispatcher.dispatch(unpackCont(cont), channels.map(_.value), cont.sequenceNumber)(
+                traceId
+              )
           }
     } yield ()
 
-  def unapply(contractArgs: (Seq[ListParWithRandom], Int)): Option[(Producer, Seq[Par])] =
+  def unapply(
+      contractArgs: (Seq[ListParWithRandom], Int)
+  ): Option[(Producer, Seq[Par])] =
     contractArgs match {
       case (
           Seq(
@@ -61,7 +65,8 @@ class ContractCall[F[_]: Concurrent: Span](
           ),
           sequenceNumber
           ) =>
-        Some((produce(rand, sequenceNumber), args))
+        val w: (Seq[Par], Par) => TraceId => F[Unit] = produce(rand, sequenceNumber)
+        Some((w, args))
       case _ => None
     }
 }

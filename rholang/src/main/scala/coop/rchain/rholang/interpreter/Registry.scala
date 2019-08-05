@@ -7,6 +7,7 @@ import com.google.protobuf.ByteString.ByteIterator
 import coop.rchain.crypto.codec.Base16
 import coop.rchain.crypto.hash.{Blake2b256, Blake2b512Random}
 import coop.rchain.crypto.signatures.Secp256k1
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
 import coop.rchain.models.Var.VarInstance.FreeVar
@@ -39,29 +40,45 @@ import scala.util.Try
   */
 trait Registry[F[_]] {
 
-  def lookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def lookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(traceId: TraceId): F[Unit]
 
-  def lookupCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def lookupCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def insert(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def insert(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(traceId: TraceId): F[Unit]
 
-  def insertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def insertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def nonceInsertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def nonceInsertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def delete(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def delete(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(traceId: TraceId): F[Unit]
 
-  def deleteRootCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def deleteRootCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def deleteCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def deleteCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def publicLookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def publicLookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(traceId: TraceId): F[Unit]
 
-  def publicRegisterRandom(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def publicRegisterRandom(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def publicRegisterSigned(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def publicRegisterSigned(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 
-  def registerInsertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit]
+  def registerInsertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit]
 }
 
 class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(implicit F: Sync[F])
@@ -141,10 +158,10 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
 
   private def handleResult(
       resultF: F[Option[(TaggedContinuation, Seq[ListParWithRandom], Int)]]
-  ): F[Unit] =
+  )(traceId: TraceId): F[Unit] =
     resultF.flatMap({
       case Some((continuation, dataList, sequenceNumber)) =>
-        dispatcher.dispatch(continuation, dataList, sequenceNumber)
+        dispatcher.dispatch(continuation, dataList, sequenceNumber)(traceId)
       case None => F.unit
     })
 
@@ -153,22 +170,30 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       chan: Par,
       rand: Blake2b512Random,
       sequenceNumber: Int
+  )(traceId: TraceId): F[Unit] =
+    handleResult(
+      space.produce(chan, ListParWithRandom(Seq(data), rand), false, sequenceNumber)(traceId)
+    )(
+      traceId
+    )
+
+  private def succeed(result: Par, ret: Par, rand: Blake2b512Random, sequenceNumber: Int)(
+      traceId: TraceId
   ): F[Unit] =
-    handleResult(space.produce(chan, ListParWithRandom(Seq(data), rand), false, sequenceNumber))
+    singleSend(result, ret, rand, sequenceNumber)(traceId)
 
-  private def succeed(result: Par, ret: Par, rand: Blake2b512Random, sequenceNumber: Int): F[Unit] =
-    singleSend(result, ret, rand, sequenceNumber)
-
-  private def fail(ret: Par, rand: Blake2b512Random, sequenceNumber: Int): F[Unit] =
-    singleSend(Par(), ret, rand, sequenceNumber)
+  private def fail(ret: Par, rand: Blake2b512Random, sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
+    singleSend(Par(), ret, rand, sequenceNumber)(traceId)
 
   private def replace(
       data: Par,
       replaceChan: Par,
       dataRand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] =
-    singleSend(data, replaceChan, dataRand, sequenceNumber)
+  )(traceId: TraceId): F[Unit] =
+    singleSend(data, replaceChan, dataRand, sequenceNumber)(traceId)
 
   private def failAndReplace(
       data: Par,
@@ -177,10 +202,10 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       dataRand: Blake2b512Random,
       failRand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] =
+  )(traceId: TraceId): F[Unit] =
     for {
-      _ <- replace(data, replaceChan, dataRand, sequenceNumber)
-      _ <- fail(retChan, failRand, sequenceNumber)
+      _ <- replace(data, replaceChan, dataRand, sequenceNumber)(traceId)
+      _ <- fail(retChan, failRand, sequenceNumber)(traceId)
     } yield ()
 
   private def fetchDataLookup(
@@ -189,7 +214,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret: Par,
       rand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] = {
+  )(traceId: TraceId): F[Unit] = {
     val channel: Par = GPrivate(ByteString.copyFrom(rand.next()))
     for {
       _ <- handleResult(
@@ -198,8 +223,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, ret, dataSource), rand),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
       _ <- handleResult(
             space.consume(
               Seq[Par](channel, dataSource),
@@ -207,8 +232,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(BodyRefs.REG_LOOKUP_CALLBACK)),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
     } yield ()
   }
 
@@ -219,7 +244,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret: Par,
       rand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] = {
+  )(traceId: TraceId): F[Unit] = {
     val channel: Par = GPrivate(ByteString.copyFrom(rand.next()))
     for {
       _ <- handleResult(
@@ -228,8 +253,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, value, ret, dataSource), rand),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
       _ <- handleResult(
             space.consume(
               Seq[Par](channel, dataSource),
@@ -237,8 +262,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(ref)),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
     } yield ()
   }
 
@@ -249,7 +274,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret: Par,
       rand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] =
+  )(traceId: TraceId): F[Unit] =
     fetchDataInsertGeneric(BodyRefs.REG_INSERT_CALLBACK)(
       dataSource,
       key,
@@ -257,7 +282,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret,
       rand,
       sequenceNumber
-    )
+    )(traceId)
 
   private def fetchDataNonceInsert(
       dataSource: Par,
@@ -266,7 +291,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret: Par,
       rand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] =
+  )(traceId: TraceId): F[Unit] =
     fetchDataInsertGeneric(BodyRefs.REG_NONCE_INSERT_CALLBACK)(
       dataSource,
       key,
@@ -274,7 +299,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret,
       rand,
       sequenceNumber
-    )
+    )(traceId)
 
   private def fetchDataRootDelete(
       dataSource: Par,
@@ -282,7 +307,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret: Par,
       rand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] = {
+  )(traceId: TraceId): F[Unit] = {
     val channel: Par = GPrivate(ByteString.copyFrom(rand.next()))
     for {
       _ <- handleResult(
@@ -291,8 +316,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, ret, dataSource), rand),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
       _ <- handleResult(
             space.consume(
               Seq[Par](channel, dataSource),
@@ -300,8 +325,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(BodyRefs.REG_DELETE_ROOT_CALLBACK)),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
     } yield ()
   }
 
@@ -315,7 +340,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       parentReplace: Par,
       parentRand: Blake2b512Random,
       sequenceNumber: Int
-  ): F[Unit] = {
+  )(traceId: TraceId): F[Unit] = {
     val keyChannel: Par    = GPrivate(ByteString.copyFrom(rand.next()))
     val parentChannel: Par = GPrivate(ByteString.copyFrom(rand.next()))
     for {
@@ -325,16 +350,16 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, ret, dataSource), rand),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
       _ <- handleResult(
             space.produce(
               parentChannel,
               ListParWithRandom(Seq(parentKey, parentData, parentReplace), parentRand),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
       _ <- handleResult(
             space.consume(
               Seq[Par](keyChannel, parentChannel, dataSource),
@@ -342,19 +367,21 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(BodyRefs.REG_DELETE_CALLBACK)),
               false,
               sequenceNumber
-            )
-          )
+            )(traceId)
+          )(traceId)
     } yield ()
   }
 
-  def lookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def lookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(ListParWithRandom(Seq(key, ret), rand)) =>
         try {
           val Some(Expr(GByteArray(_))) = key.singleExpr
-          fetchDataLookup(registryRoot, key, ret, rand, sequenceNumber)
+          fetchDataLookup(registryRoot, key, ret, rand, sequenceNumber)(traceId)
         } catch {
-          case _: MatchError => fail(ret, rand, sequenceNumber)
+          case _: MatchError => fail(ret, rand, sequenceNumber)(traceId)
         }
       case _ => F.unit
     }
@@ -364,13 +391,16 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
   // Result there, return it.
   // Further lookup needed, recurse.
 
-  def lookupCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def lookupCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(
           ListParWithRandom(Seq(key, ret, replaceChan), callRand),
           ListParWithRandom(Seq(data), dataRand)
           ) =>
-        def localFail() = failAndReplace(data, replaceChan, ret, dataRand, callRand, sequenceNumber)
+        def localFail() =
+          failAndReplace(data, replaceChan, ret, dataRand, callRand, sequenceNumber)(traceId)
         try {
           val Some(Expr(GByteArray(bs)))               = key.singleExpr
           val (head, tail)                             = safeUncons(bs)
@@ -385,25 +415,25 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
             ps(0).singleExpr() match {
               case Some(Expr(GInt(0))) =>
                 if (tail == edgeAdditional)
-                  replace(data, replaceChan, dataRand, sequenceNumber) >> succeed(
+                  replace(data, replaceChan, dataRand, sequenceNumber)(traceId) >> succeed(
                     ps(2),
                     ret,
                     callRand,
                     sequenceNumber
-                  )
+                  )(traceId)
                 else
                   localFail()
               case Some(Expr(GInt(1))) =>
                 if (tail.startsWith(edgeAdditional)) {
                   val newKey = tail.substring(edgeAdditional.size)
 
-                  replace(data, replaceChan, dataRand, sequenceNumber) >> fetchDataLookup(
+                  replace(data, replaceChan, dataRand, sequenceNumber)(traceId) >> fetchDataLookup(
                     ps(2),
                     parByteArray(newKey),
                     ret,
                     callRand,
                     sequenceNumber
-                  )
+                  )(traceId)
                 } else
                   localFail()
               case _ =>
@@ -416,25 +446,29 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       case _ => F.unit
     }
 
-  def insert(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def insert(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(ListParWithRandom(Seq(key, value, ret), rand)) =>
         try {
           val Some(Expr(GByteArray(_))) = key.singleExpr
-          fetchDataInsert(registryRoot, key, value, ret, rand, sequenceNumber)
+          fetchDataInsert(registryRoot, key, value, ret, rand, sequenceNumber)(traceId)
         } catch {
-          case _: MatchError => fail(ret, rand, sequenceNumber)
+          case _: MatchError => fail(ret, rand, sequenceNumber)(traceId)
         }
       case _ => F.unit
     }
 
-  def insertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
-    genericInsertCallback(args, (x, y) => true, fetchDataInsert, sequenceNumber)
+  def insertCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
+    genericInsertCallback(args, (x, y) => true, fetchDataInsert, sequenceNumber)(traceId)
 
   def nonceInsertCallback(
       args: RootSeq[ListParWithRandom],
       sequenceNumber: Int
-  ): F[Unit] = {
+  )(traceId: TraceId): F[Unit] = {
     def nonceCheck(original: Par, replacement: Par): Boolean = {
       val Some(Expr(ETupleBody(ETuple(Seq(oldNonce, _), _, _)))) = original.singleExpr
       val Some(Expr(ETupleBody(ETuple(Seq(newNonce, _), _, _)))) = replacement.singleExpr
@@ -442,22 +476,23 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       val Some(Expr(GInt(newNonceInt)))                          = newNonce.singleExpr
       newNonceInt > oldNonceInt
     }
-    genericInsertCallback(args, nonceCheck, fetchDataNonceInsert, sequenceNumber)
+    genericInsertCallback(args, nonceCheck, fetchDataNonceInsert, sequenceNumber)(traceId)
   }
 
   def genericInsertCallback(
       args: RootSeq[ListParWithRandom],
       check: (Par, Par) => Boolean,
       // Channel, Remaining Key, Value, Return Channel, Random State
-      recurse: (Par, Par, Par, Par, Blake2b512Random, Int) => F[Unit],
+      recurse: (Par, Par, Par, Par, Blake2b512Random, Int) => TraceId => F[Unit],
       sequenceNumber: Int
-  ): F[Unit] =
+  )(traceId: TraceId): F[Unit] =
     args match {
       case Seq(
           ListParWithRandom(Seq(key, value, ret, replaceChan), callRand),
           ListParWithRandom(Seq(data), dataRand)
           ) =>
-        def localFail() = failAndReplace(data, replaceChan, ret, dataRand, callRand, sequenceNumber)
+        def localFail() =
+          failAndReplace(data, replaceChan, ret, dataRand, callRand, sequenceNumber)(traceId)
         try {
           val Some(Expr(GByteArray(bs)))   = key.singleExpr
           val (head, tail)                 = safeUncons(bs)
@@ -465,8 +500,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
           def insert() = {
             val tuple: Par  = ETuple(Seq(GInt(0), parByteArray(tail), value))
             val newMap: Par = ParMap(parMap.ps + (parByteArray(head) -> tuple))
-            replace(newMap, replaceChan, dataRand, sequenceNumber)
-              .flatMap(_ => succeed(value, ret, callRand, sequenceNumber))
+            replace(newMap, replaceChan, dataRand, sequenceNumber)(traceId)
+              .flatMap(_ => succeed(value, ret, callRand, sequenceNumber)(traceId))
           }
           parMap.ps.get(parByteArray(head)) match {
             case None => insert()
@@ -500,9 +535,9 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                   val updatedTuple: Par = ETuple(Seq(GInt(1), outgoingEdge, newName))
                   val updatedMap: Par   = ParMap(parMap.ps + (parByteArray(head) -> updatedTuple))
                   for {
-                    _ <- replace(updatedMap, replaceChan, dataRand, sequenceNumber)
-                    _ <- replace(newMap, newName, callRand.splitByte(0), sequenceNumber)
-                    _ <- succeed(value, ret, callRand.splitByte(1), sequenceNumber)
+                    _ <- replace(updatedMap, replaceChan, dataRand, sequenceNumber)(traceId)
+                    _ <- replace(newMap, newName, callRand.splitByte(0), sequenceNumber)(traceId)
+                    _ <- succeed(value, ret, callRand.splitByte(1), sequenceNumber)(traceId)
                   } yield ()
                 }
                 ps(0).singleExpr() match {
@@ -522,7 +557,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                     if (tail.startsWith(edgeAdditional)) {
                       val newKey = tail.substring(edgeAdditional.size)
 
-                      replace(data, replaceChan, dataRand, sequenceNumber) >>
+                      replace(data, replaceChan, dataRand, sequenceNumber)(traceId) >>
                         recurse(
                           ps(2),
                           parByteArray(newKey),
@@ -530,7 +565,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                           ret,
                           callRand,
                           sequenceNumber
-                        )
+                        )(traceId)
                     } else {
                       split()
                     }
@@ -546,25 +581,30 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
         F.unit
     }
 
-  def delete(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def delete(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(ListParWithRandom(Seq(key, ret), rand)) =>
         try {
           val Some(Expr(GByteArray(_))) = key.singleExpr
-          fetchDataRootDelete(registryRoot, key, ret, rand, sequenceNumber)
+          fetchDataRootDelete(registryRoot, key, ret, rand, sequenceNumber)(traceId)
         } catch {
-          case _: MatchError => fail(ret, rand, sequenceNumber)
+          case _: MatchError => fail(ret, rand, sequenceNumber)(traceId)
         }
       case _ => F.unit
     }
 
-  def deleteRootCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def deleteRootCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(
           ListParWithRandom(Seq(key, ret, replaceChan), callRand),
           ListParWithRandom(Seq(data), dataRand)
           ) =>
-        def localFail() = failAndReplace(data, replaceChan, ret, dataRand, callRand, sequenceNumber)
+        def localFail() =
+          failAndReplace(data, replaceChan, ret, dataRand, callRand, sequenceNumber)(traceId)
         try {
           val Some(Expr(GByteArray(bs)))               = key.singleExpr
           val (head, tail)                             = safeUncons(bs)
@@ -580,12 +620,12 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               case Some(Expr(GInt(0))) =>
                 if (tail == edgeAdditional) {
                   val updatedMap: Par = ParMap(parMap.ps - parByteArray(head))
-                  replace(updatedMap, replaceChan, dataRand, sequenceNumber) >> succeed(
+                  replace(updatedMap, replaceChan, dataRand, sequenceNumber)(traceId) >> succeed(
                     ps(2),
                     ret,
                     callRand,
                     sequenceNumber
-                  )
+                  )(traceId)
                 } else {
                   localFail()
                 }
@@ -602,7 +642,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                     replaceChan,
                     dataRand,
                     sequenceNumber
-                  )
+                  )(traceId)
                 } else {
                   localFail()
                 }
@@ -616,7 +656,9 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       case _ => F.unit
     }
 
-  def deleteCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def deleteCallback(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(
           ListParWithRandom(Seq(key, ret, replaceChan), callRand),
@@ -627,14 +669,14 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
           ListParWithRandom(Seq(data), dataRand)
           ) =>
         def localFail() =
-          replace(parentData, parentReplace, parentRand, sequenceNumber) >> failAndReplace(
+          replace(parentData, parentReplace, parentRand, sequenceNumber)(traceId) >> failAndReplace(
             data,
             replaceChan,
             ret,
             dataRand,
             callRand,
             sequenceNumber
-          )
+          )(traceId)
         try {
           val Some(Expr(GByteArray(bs))) = key.singleExpr
           val (head, tail)               = safeUncons(bs)
@@ -660,7 +702,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                 val mergedEdge        = parByteArray(mergeStream.toByteString())
                 val updatedTuple: Par = ETuple(Seq(ps(0), mergedEdge, ps(2)))
                 val updatedMap: Par   = ParMap(parMap.ps + (parentKey -> updatedTuple))
-                replace(updatedMap, parentReplace, parentRand, sequenceNumber)
+                replace(updatedMap, parentReplace, parentRand, sequenceNumber)(traceId)
               }
             }
           }
@@ -679,9 +721,9 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                   if (parMap.ps.size > 2) {
                     val updatedMap: Par = ParMap(parMap.ps - parByteArray(head))
                     for {
-                      _ <- replace(updatedMap, replaceChan, dataRand, sequenceNumber)
-                      _ <- replace(parentData, parentReplace, parentRand, sequenceNumber)
-                      _ <- succeed(ps(2), ret, callRand, sequenceNumber)
+                      _ <- replace(updatedMap, replaceChan, dataRand, sequenceNumber)(traceId)
+                      _ <- replace(parentData, parentReplace, parentRand, sequenceNumber)(traceId)
+                      _ <- succeed(ps(2), ret, callRand, sequenceNumber)(traceId)
                     } yield ()
                   } else if (parMap.ps.size != 2) {
                     localFail()
@@ -689,7 +731,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                     val shrunkMap = (parMap.ps - parByteArray(head))
                     for {
                       _ <- Function.tupled(mergeWithParent(_, _))(shrunkMap.head)
-                      _ <- succeed(ps(2), ret, callRand, sequenceNumber)
+                      _ <- succeed(ps(2), ret, callRand, sequenceNumber)(traceId)
                     } yield ()
                   }
                 } else {
@@ -708,7 +750,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                     replaceChan,
                     dataRand,
                     sequenceNumber
-                  )
+                  )(traceId)
                 } else {
                   localFail()
                 }
@@ -750,21 +792,23 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
     )
   )
 
-  def publicLookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def publicLookup(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(ListParWithRandom(Seq(RhoType.Uri(uri), ret), rand)) =>
         val idUri = WithPrefix("rho:id:")
 
         val result = uri match {
           case idUri(id) =>
-            handleRhoIdLookup(id, sequenceNumber, ret, rand, uri)
+            handleRhoIdLookup(id, sequenceNumber, ret, rand, uri)(traceId)
           case LangContract(id) =>
-            handleRhoIdLookup(id, sequenceNumber, ret, rand, uri)
+            handleRhoIdLookup(id, sequenceNumber, ret, rand, uri)(traceId)
           case RChainContract(id) =>
-            handleRhoIdLookup(id, sequenceNumber, ret, rand, uri)
+            handleRhoIdLookup(id, sequenceNumber, ret, rand, uri)(traceId)
           case _ => None
         }
-        result.getOrElse(fail(ret, rand, sequenceNumber))
+        result.getOrElse(fail(ret, rand, sequenceNumber)(traceId))
       case _ => F.unit
     }
 
@@ -774,7 +818,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       ret: Par,
       rand: Blake2b512Random,
       uri: String
-  ): Option[F[Unit]] =
+  )(traceId: TraceId): Option[F[Unit]] =
     for {
       bytes   <- Try { ZBase32.decode(id, 270) }.toOption
       payload <- verifyCrc(bytes)
@@ -784,7 +828,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
           rand
         )
       )
-    } yield lookup(args, sequenceNumber)
+    } yield lookup(args, sequenceNumber)(traceId)
 
   private def verifyCrc(bytes: Array[Byte]): Option[Array[Byte]] = {
     val crc = ((bytes(32).toShort & 0xff) | ((bytes(33).toShort & 0xfc) << 6)).toShort
@@ -794,10 +838,12 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
     else None
   }
 
-  def publicRegisterRandom(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def publicRegisterRandom(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(ListParWithRandom(Seq(value, ret), rand)) =>
-        def localFail() = fail(ret, rand, sequenceNumber)
+        def localFail() = fail(ret, rand, sequenceNumber)(traceId)
         try {
           if (value.serializedSize > 1024)
             localFail()
@@ -815,8 +861,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       ListParWithRandom(Seq(uri, value, ret), rand),
                       false,
                       sequenceNumber
-                    )
-                  )
+                    )(traceId)
+                  )(traceId)
               _ <- handleResult(
                     space.consume(
                       Seq[Par](curryChan, resultChan),
@@ -824,8 +870,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       TaggedContinuation(ScalaBodyRef(BodyRefs.REG_REGISTER_INSERT_CALLBACK)),
                       false,
                       sequenceNumber
-                    )
-                  )
+                    )(traceId)
+                  )(traceId)
               _ <- fetchDataInsert(
                     registryRoot,
                     partialKey,
@@ -833,7 +879,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                     resultChan,
                     rand,
                     sequenceNumber
-                  )
+                  )(traceId)
             } yield ()
           }
         } catch {
@@ -843,7 +889,9 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       case _ => F.unit
     }
 
-  def publicRegisterSigned(args: RootSeq[ListParWithRandom], sequenceNumber: Int): F[Unit] =
+  def publicRegisterSigned(args: RootSeq[ListParWithRandom], sequenceNumber: Int)(
+      traceId: TraceId
+  ): F[Unit] =
     args match {
       case Seq(ListParWithRandom(Seq(pubKey, value, sig, ret), rand)) =>
         try {
@@ -873,8 +921,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       ListParWithRandom(Seq(uri, value, ret), rand),
                       false,
                       sequenceNumber
-                    )
-                  )
+                    )(traceId)
+                  )(traceId)
               _ <- handleResult(
                     space.consume(
                       Seq[Par](curryChan, resultChan),
@@ -882,8 +930,8 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       TaggedContinuation(ScalaBodyRef(BodyRefs.REG_REGISTER_INSERT_CALLBACK)),
                       false,
                       sequenceNumber
-                    )
-                  )
+                    )(traceId)
+                  )(traceId)
               _ <- fetchDataNonceInsert(
                     registryRoot,
                     hashKey,
@@ -891,13 +939,13 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                     resultChan,
                     rand,
                     sequenceNumber
-                  )
+                  )(traceId)
             } yield ()
           } else {
-            fail(ret, rand, sequenceNumber)
+            fail(ret, rand, sequenceNumber)(traceId)
           }
         } catch {
-          case _: MatchError => fail(ret, rand, sequenceNumber)
+          case _: MatchError => fail(ret, rand, sequenceNumber)(traceId)
         }
       case _ => F.unit
     }
@@ -905,16 +953,16 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
   def registerInsertCallback(
       args: RootSeq[ListParWithRandom],
       sequenceNumber: Int
-  ): F[Unit] =
+  )(traceId: TraceId): F[Unit] =
     args match {
       case Seq(
           ListParWithRandom(Seq(urn, expectedValue, ret), _),
           ListParWithRandom(Seq(value), valRand)
           ) =>
         if (expectedValue == value) {
-          singleSend(urn, ret, valRand, sequenceNumber)
+          singleSend(urn, ret, valRand, sequenceNumber)(traceId)
         } else {
-          fail(ret, valRand, sequenceNumber)
+          fail(ret, valRand, sequenceNumber)(traceId)
         }
       case _ =>
         F.unit
