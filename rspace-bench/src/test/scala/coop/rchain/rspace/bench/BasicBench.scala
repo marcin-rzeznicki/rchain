@@ -7,6 +7,7 @@ import cats.effect.{ContextShift, Sync}
 import coop.rchain.catscontrib.TaskContrib.TaskOps
 import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.Expr.ExprInstance.{GInt, GString}
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
@@ -35,6 +36,7 @@ import scala.collection.immutable.{BitSet, Seq}
 class BasicBench {
 
   import BasicBench._
+  implicit val traceId: TraceId = Span.empty
 
   @Benchmark
   @BenchmarkMode(Array(Mode.AverageTime))
