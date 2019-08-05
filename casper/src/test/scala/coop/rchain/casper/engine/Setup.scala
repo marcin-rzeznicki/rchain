@@ -16,6 +16,7 @@ import coop.rchain.catscontrib.ApplicativeError_
 import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.comm._
 import coop.rchain.comm.rp.Connect.{Connections, ConnectionsCell}
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.p2p.EffectsTestInstances._
@@ -31,9 +32,10 @@ object Setup {
     implicit val eventLogStub     = new EventLogStub[Task]
     implicit val metrics          = new Metrics.MetricsNOP[Task]
     implicit val span: Span[Task] = NoopSpan[Task]()
-    val networkId                 = "test"
-    val scheduler                 = Scheduler.io("test")
-    val runtimeDir                = BlockDagStorageTestFixture.blockStorageDir
+
+    val networkId  = "test"
+    val scheduler  = Scheduler.io("test")
+    val runtimeDir = BlockDagStorageTestFixture.blockStorageDir
     val activeRuntime =
       Runtime
         .createWithEmptyCost[Task](runtimeDir, 3024L * 1024)(
@@ -43,11 +45,15 @@ object Setup {
           metrics,
           span,
           par.Par[Task],
-          scheduler
+          scheduler,
+          Span.empty
         )
         .unsafeRunSync(scheduler)
 
-    implicit val runtimeManager = RuntimeManager.fromRuntime(activeRuntime).unsafeRunSync(scheduler)
+    implicit val runtimeManager = {
+      implicit val traceId: TraceId = Span.next
+      RuntimeManager.fromRuntime(activeRuntime).unsafeRunSync(scheduler)
+    }
 
     val params @ (_, genesisParams) = GenesisBuilder.buildGenesisParameters()
     val context                     = GenesisBuilder.buildGenesis(params)
@@ -102,7 +108,7 @@ object Setup {
       override def normalizedFaultTolerance(
           blockDag: BlockDagRepresentation[Task],
           estimateBlockHash: BlockHash
-      ): Task[Float] = Task.pure(1.0f)
+      )(implicit traceId: TraceId): Task[Float] = Task.pure(1.0f)
     }
     implicit val lastFinalizedBlockCalculator = LastFinalizedBlockCalculator[Task](0f)
     implicit val currentRequests: Running.RequestedBlocks[Task] =

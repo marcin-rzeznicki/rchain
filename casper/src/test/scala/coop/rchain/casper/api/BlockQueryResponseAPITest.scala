@@ -3,40 +3,43 @@ package coop.rchain.casper.api
 import cats.effect.{Resource, Sync}
 import cats.implicits._
 import com.google.protobuf.ByteString
-import coop.rchain.casper.engine._, EngineCell._
+import coop.rchain.casper.engine._
+import EngineCell._
 import coop.rchain.blockstorage.{BlockDagStorage, BlockStore}
-import coop.rchain.casper.engine._, EngineCell._
+import coop.rchain.casper.engine._
+import EngineCell._
 import coop.rchain.casper._
 import coop.rchain.casper.helper.{BlockDagStorageFixture, NoOpsCasperEffect}
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.util.rholang.Resources.mkRuntimeManager
 import coop.rchain.casper.util.rholang.RuntimeManager
 import coop.rchain.casper.util.{ConstructDeploy, ProtoUtil}
-import coop.rchain.metrics.Metrics
+import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.shared.Cell
 import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.crypto.signatures.Secp256k1
 import coop.rchain.crypto.PrivateKey
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.p2p.EffectsTestInstances.{LogStub, LogicalTime}
 import monix.eval.Task
 import org.scalatest._
 import monix.execution.Scheduler.Implicits.global
 
 import scala.collection.immutable.HashMap
-import coop.rchain.metrics.NoopSpan
 
 class BlockQueryResponseAPITest
     extends FlatSpec
     with Matchers
     with Inside
     with BlockDagStorageFixture {
-  implicit val timeEff = new LogicalTime[Task]
-  implicit val spanEff = NoopSpan[Task]()
+  implicit val timeEff          = new LogicalTime[Task]
+  implicit val spanEff          = NoopSpan[Task]()
+  implicit val traceId: TraceId = Span.next
   private val runtimeManagerResource: Resource[Task, RuntimeManager[Task]] =
     mkRuntimeManager("block-query-response-api-test")
 
-  private val (sk, _)  = ConstructDeploy.defaultKeyPair
+  private val (sk, pk) = ConstructDeploy.defaultKeyPair
   val secondBlockQuery = "1234"
   val badTestHashQuery = "No such a hash"
 
@@ -101,7 +104,7 @@ class BlockQueryResponseAPITest
         spanEff                                  = NoopSpan[Task]()
         (logEff, engineCell, cliqueOracleEffect) = effects
         q                                        = BlockQuery(hash = secondBlockQuery)
-        blockQueryResponse <- BlockAPI.getBlock[Task](q)(
+        blockQueryResponse <- BlockAPI.getBlock[Task](q, traceId)(
                                Sync[Task],
                                engineCell,
                                logEff,
@@ -134,7 +137,7 @@ class BlockQueryResponseAPITest
         spanEff                                  = NoopSpan[Task]()
         (logEff, engineCell, cliqueOracleEffect) = effects
         q                                        = BlockQuery(hash = badTestHashQuery)
-        blockQueryResponse <- BlockAPI.getBlock[Task](q)(
+        blockQueryResponse <- BlockAPI.getBlock[Task](q, traceId)(
                                Sync[Task],
                                engineCell,
                                logEff,
@@ -151,6 +154,63 @@ class BlockQueryResponseAPITest
       } yield ()
   }
 
+  "findBlockWithDeploy" should "return successful block info response" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      for {
+        effects                                 <- effectsForSimpleCasperSetup(blockStore, blockDagStorage)
+        (logEff, casperRef, cliqueOracleEffect) = effects
+        user                                    = ByteString.copyFrom(pk.bytes)
+        timestamp                               = 1L
+        blockQueryResponse <- BlockAPI.findBlockWithDeploy[Task](user, timestamp)(
+                               Sync[Task],
+                               casperRef,
+                               logEff,
+                               cliqueOracleEffect,
+                               blockStore,
+                               traceId
+                             )
+        _ = inside(blockQueryResponse) {
+          case Right(BlockQueryResponse(Some(blockInfo))) =>
+            blockInfo.blockHash should be(secondHashString)
+            blockInfo.blockSize should be(secondBlock.serializedSize.toString)
+            blockInfo.blockNumber should be(blockNumber)
+            blockInfo.version should be(version)
+            blockInfo.deployCount should be(deployCount)
+            blockInfo.faultTolerance should be(faultTolerance)
+            blockInfo.mainParentHash should be(genesisHashString)
+            blockInfo.parentsHashList should be(parentsString)
+            blockInfo.sender should be(senderString)
+            blockInfo.shardId should be(shardId)
+            blockInfo.bondsValidatorList should be(bondValidatorHashList)
+            blockInfo.deployCost should be(deployCostList)
+        }
+      } yield ()
+  }
+
+  it should "return error when no block matching query exists" in withStorage {
+    implicit blockStore => implicit blockDagStorage =>
+      for {
+        effects                                 <- emptyEffects(blockStore, blockDagStorage)
+        (logEff, casperRef, cliqueOracleEffect) = effects
+        user                                    = ByteString.EMPTY
+        timestamp                               = 0L
+        blockQueryResponse <- BlockAPI.findBlockWithDeploy[Task](user, timestamp)(
+                               Sync[Task],
+                               casperRef,
+                               logEff,
+                               cliqueOracleEffect,
+                               blockStore,
+                               traceId
+                             )
+        _ = inside(blockQueryResponse) {
+          case Left(msg) =>
+            msg should be(
+              s"Error: Failure to find block containing deploy signed by  with timestamp $timestamp"
+            )
+        }
+      } yield ()
+  }
+
   "findDeploy" should "return successful block info response when a block contains the deploy with given signature" in withStorage {
     implicit blockStore => implicit blockDagStorage =>
       for {
@@ -159,12 +219,14 @@ class BlockQueryResponseAPITest
         deployId = SignDeployment
           .sign(PrivateKey(sk.bytes), randomDeploys.head.deploy.get)
           .sig
+          .toByteArray
         blockQueryResponse <- BlockAPI.findDeploy[Task](deployId)(
                                Sync[Task],
                                casperRef,
                                logEff,
                                cliqueOracleEffect,
-                               blockStore
+                               blockStore,
+                               traceId
                              )
         _ = inside(blockQueryResponse) {
           case Right(LightBlockQueryResponse(Some(blockInfo))) =>
@@ -186,13 +248,14 @@ class BlockQueryResponseAPITest
       for {
         effects                                 <- emptyEffects(blockStore, blockDagStorage)
         (logEff, casperRef, cliqueOracleEffect) = effects
-        deployId                                = ByteString.copyFromUtf8("asdfQwertyUiopxyzcbv")
+        deployId                                = "asdfQwertyUiopxyzcbv".getBytes
         blockQueryResponse <- BlockAPI.findDeploy[Task](deployId)(
                                Sync[Task],
                                casperRef,
                                logEff,
                                cliqueOracleEffect,
-                               blockStore
+                               blockStore,
+                               traceId
                              )
         _ = inside(blockQueryResponse) {
           case Left(msg) =>
