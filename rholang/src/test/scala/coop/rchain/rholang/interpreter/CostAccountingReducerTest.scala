@@ -1,6 +1,7 @@
 package coop.rchain.rholang.interpreter
 
 import coop.rchain.crypto.hash.Blake2b512Random
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.Expr.ExprInstance.{EVarBody, GString}
 import coop.rchain.models.Var.VarInstance.FreeVar
@@ -11,7 +12,7 @@ import coop.rchain.rholang.interpreter.Runtime.RhoISpace
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
 import coop.rchain.rholang.interpreter.storage.{ChargingRSpace, ISpaceStub}
-import coop.rchain.rholang.interpreter.storage._
+import coop.rchain.rholang.interpreter.storage.implicits._
 import coop.rchain.rspace.internal.{Datum, Row}
 import coop.rchain.rspace._
 import coop.rchain.rspace.Match
@@ -28,6 +29,7 @@ import scala.concurrent.duration._
 class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEqualsSupport {
 
   implicit val noopSpan: Span[Task] = Span.noop
+  implicit val traceId: TraceId     = Span.empty
 
   behavior of "Cost accounting in Reducer"
 
@@ -82,6 +84,9 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
           data: ListParWithRandom,
           persist: Boolean,
           sequenceNumber: Int
+      )(
+          implicit m: Match[Task, BindPattern, ListParWithRandom],
+          traceId: TraceId
       ): Task[
         Option[(ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[ListParWithRandom]])]
       ] =
@@ -149,7 +154,7 @@ class CostAccountingReducerTest extends FlatSpec with Matchers with TripleEquals
       val initPhlos = sendACost + sendBCost - SEND_EVAL_COST - Cost(1)
 
       for {
-        _           <- cost.set(initPhlos)
+        _           <- reducer.setPhlo(initPhlos)
         result      <- reducer.inj(program).attempt
         mappedSpace <- pureRSpace.toMap
       } yield (result, mappedSpace)

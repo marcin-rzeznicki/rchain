@@ -9,6 +9,7 @@ import coop.rchain.crypto.codec.Base16
 import coop.rchain.crypto.hash.{Blake2b256, Blake2b512Random, Keccak256, Sha256}
 import coop.rchain.crypto.signatures.{Ed25519, Secp256k1}
 import coop.rchain.metrics
+import coop.rchain.metrics.Span.TraceId
 import coop.rchain.metrics.{Metrics, NoopSpan, Span}
 import coop.rchain.models.Expr.ExprInstance.{GBool, GByteArray, GString}
 import coop.rchain.models.Var.VarInstance.Wildcard
@@ -39,9 +40,11 @@ class CryptoChannelsSpec
 
   behavior of "Crypto channels"
 
-  implicit val rand: Blake2b512Random                      = Blake2b512Random(Array.empty[Byte])
-  implicit val serializePar: Serialize[Par]                = storage.serializePar
-  implicit val serializePars: Serialize[ListParWithRandom] = storage.serializePars
+  implicit val traceId: TraceId             = Span.empty
+  implicit val rand: Blake2b512Random       = Blake2b512Random(Array.empty[Byte])
+  implicit val serializePar: Serialize[Par] = storage.implicits.serializePar
+  implicit val serializePars: Serialize[ListParWithRandom] =
+    storage.implicits.serializePars
 
   val serialize: Par => Array[Byte]                    = Serialize[Par].encode(_).toArray
   val byteArrayToByteString: Array[Byte] => ByteString = ba => ByteString.copyFrom(ba)
@@ -54,8 +57,8 @@ class CryptoChannelsSpec
   def clearStore(
       ackChannel: Par,
       timeout: Duration = 3.seconds
-  )(implicit env: Env[Par], reduce: Reduce[Task]): Unit = {
-    val consume: Par = Receive(
+  )(implicit env: Env[Par], reduce: ChargingReducer[Task]): Unit = {
+    val consume = Receive(
       Seq(ReceiveBind(Seq(EVar(Var(Wildcard(WildcardMsg())))), ackChannel)),
       Par()
     )
@@ -221,8 +224,8 @@ class CryptoChannelsSpec
 
     val runtime = (for {
       runtime <- Runtime.createWithEmptyCost[Task](dbDir, size)
-      _       <- runtime.cost.set(Cost.UNSAFE_MAX)
-    } yield runtime).unsafeRunSync
+      _       <- runtime.reducer.setPhlo(Cost.UNSAFE_MAX)
+    } yield (runtime)).unsafeRunSync
 
     try {
       test((runtime.reducer, runtime.space))
@@ -235,6 +238,6 @@ class CryptoChannelsSpec
   /** TODO(mateusz.gorski): once we refactor Rholang[AndScala]Dispatcher
     *  to push effect choice up until declaration site refactor to `Reduce[Coeval]`
     */
-  override type FixtureParam = (Reduce[Task], RhoISpace[Task])
+  override type FixtureParam = (ChargingReducer[Task], RhoISpace[Task])
 
 }
