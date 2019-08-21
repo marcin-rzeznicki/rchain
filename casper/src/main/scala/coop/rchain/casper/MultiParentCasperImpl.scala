@@ -87,21 +87,22 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
         )
         .as(BlockStatus.processing)
 
-    def doppelgangerAndAdd = spanF.trace(AddBlockMetricsSource, parentTraceId) { implicit traceId =>
-      for {
-        dag <- blockDag
-        _ <- validatorId match {
-              case Some(ValidatorIdentity(publicKey, _, _)) =>
-                val sender = ByteString.copyFrom(publicKey.bytes)
-                handleDoppelganger(b, sender)
-              case None => ().pure[F]
-            }
-        _      <- BlockStore[F].put(b)
-        _      <- spanF.mark("block-store-put")
-        status <- internalAddBlock(b, dag)
-        _      <- spanF.mark("block-added-status")
-      } yield status
-    }
+    def doppelgangerAndAdd =
+      spanF.trace(AddBlockMetricsSource, parentTraceId) { implicit traceId =>
+        for {
+          dag <- blockDag
+          _ <- validatorId match {
+                case Some(ValidatorIdentity(publicKey, _, _)) =>
+                  val sender = ByteString.copyFrom(publicKey.bytes)
+                  handleDoppelganger(b, sender)
+                case None => ().pure[F]
+              }
+          _      <- BlockStore[F].put(b)
+          _      <- spanF.mark("block-store-put")
+          status <- internalAddBlock(b, dag)
+          _      <- spanF.mark("block-added-status")
+        } yield status
+      }
 
     for {
       status <- blockProcessingLock.withPermit {

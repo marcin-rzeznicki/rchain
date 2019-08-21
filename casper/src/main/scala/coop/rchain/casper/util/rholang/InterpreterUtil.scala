@@ -187,7 +187,6 @@ object InterpreterUtil {
                           )
       _                    <- Span[F].mark(s"${nonEmptyParents.length}-non-empty-parents")
       possiblePreStateHash <- computeParentsPostState[F](nonEmptyParents, dag, runtimeManager)
-      _                    <- Span[F].mark("after-compute-parents-post-state")
       result <- possiblePreStateHash.flatTraverse { preStateHash =>
                  runtimeManager
                    .computeState(preStateHash)(deploys, blockData, invalidBlocks, traceId)
@@ -215,7 +214,7 @@ object InterpreterUtil {
         parentStateHash.asRight[Throwable].pure[F]
 
       case (_, initStateHash) +: _ =>
-        computeMultiParentsPostState[F](parents, dag, runtimeManager, initStateHash, traceId)
+        computeMultiParentsPostState[F](parents, dag, runtimeManager, initStateHash)
     }
   }
   // In the case of multiple parents we need to apply all of the deploys that have been
@@ -225,10 +224,9 @@ object InterpreterUtil {
       parents: Seq[BlockMessage],
       dag: BlockDagRepresentation[F],
       runtimeManager: RuntimeManager[F],
-      initStateHash: StateHash,
-      parentTraceId: TraceId
-  ): F[Either[Throwable, StateHash]] =
-    Span[F].trace(ComputeMultiParentsPostStateMetricsSource, parentTraceId) { implicit traceId =>
+      initStateHash: StateHash
+  )(implicit traceId: TraceId): F[Either[Throwable, StateHash]] =
+    Span[F].withMarks(ComputeMultiParentsPostStateMetricsSource) {
       for {
         blockHashesToApply <- findMultiParentsBlockHashesForReplay(parents, dag)
         _                  <- Span[F].mark("after-block-hashes-to-apply")
@@ -280,7 +278,6 @@ object InterpreterUtil {
                              case Left(_) => acc.pure[F]
                            }
                        }
-        _ <- Span[F].mark("after-replays")
       } yield replayResult
     }
 

@@ -154,7 +154,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
   ): F[(StateHash, StateHash, Seq[InternalProcessedDeploy])] = {
     val startHash = emptyStateHash
     withRuntimeLock { runtime =>
-      Span[F].trace(computeGenesisLabel, parentTraceId) { implicit traceId =>
+      Span[F].noop(computeGenesisLabel, parentTraceId) { implicit traceId =>
         for {
           _ <- runtime.blockData.set(BlockData(blockTime, 0))
 //          _          <- Span[F].mark("before-process-deploys")
@@ -325,46 +325,45 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
 
   private def replayDeploy(runtime: Runtime[F], parentTraceId: TraceId)(
       processedDeploy: InternalProcessedDeploy
-  ): F[Option[ReplayFailure]] = Span[F].trace(replayDeployLabel, parentTraceId) {
-    implicit traceId =>
-      import processedDeploy._
-      for {
-        _              <- runtime.replaySpace.rig(processedDeploy.deployLog)
-        softCheckpoint <- runtime.replaySpace.createSoftCheckpoint()(traceId)
-        _              <- Span[F].mark("before-replay-deploy-compute-effect")
-        replayEvaluateResult <- computeEffect(runtime, runtime.replayReducer)(
-                                 processedDeploy.deploy
-                               )
-        //TODO: compare replay deploy cost to given deploy cost
-        EvaluateResult(_, errors) = replayEvaluateResult
-        _                         <- Span[F].mark("after-replay-deploy-compute-effect")
-        cont <- DeployStatus.fromErrors(errors) match {
-                 case int: InternalErrors =>
-                   (deploy.some, int: Failed).some.pure[F]
-                 case replayStatus =>
-                   if (status.isFailed != replayStatus.isFailed)
-                     (deploy.some, ReplayStatusMismatch(replayStatus, status): Failed).some
-                       .pure[F]
-                   else if (errors.nonEmpty)
-                     runtime.replaySpace.revertToSoftCheckpoint(softCheckpoint)(traceId) >> none[
-                       ReplayFailure
-                     ].pure[F]
-                   else {
-                     runtime.replaySpace
-                       .checkReplayData()
-                       .attempt
-                       .flatMap {
-                         case Right(_) => none[ReplayFailure].pure[F]
-                         case Left(ex: ReplayException) =>
-                           (none[DeployData], UnusedCommEvent(ex): Failed).some
-                             .pure[F]
-                         case Left(ex) =>
-                           (none[DeployData], UserErrors(Vector(ex)): Failed).some
-                             .pure[F]
-                       }
-                   }
-               }
-      } yield cont
+  ): F[Option[ReplayFailure]] = Span[F].noop(replayDeployLabel, parentTraceId) { implicit traceId =>
+    import processedDeploy._
+    for {
+      _              <- runtime.replaySpace.rig(processedDeploy.deployLog)
+      softCheckpoint <- runtime.replaySpace.createSoftCheckpoint()(traceId)
+      _              <- Span[F].mark("before-replay-deploy-compute-effect")
+      replayEvaluateResult <- computeEffect(runtime, runtime.replayReducer)(
+                               processedDeploy.deploy
+                             )
+      //TODO: compare replay deploy cost to given deploy cost
+      EvaluateResult(_, errors) = replayEvaluateResult
+      _                         <- Span[F].mark("after-replay-deploy-compute-effect")
+      cont <- DeployStatus.fromErrors(errors) match {
+               case int: InternalErrors =>
+                 (deploy.some, int: Failed).some.pure[F]
+               case replayStatus =>
+                 if (status.isFailed != replayStatus.isFailed)
+                   (deploy.some, ReplayStatusMismatch(replayStatus, status): Failed).some
+                     .pure[F]
+                 else if (errors.nonEmpty)
+                   runtime.replaySpace.revertToSoftCheckpoint(softCheckpoint)(traceId) >> none[
+                     ReplayFailure
+                   ].pure[F]
+                 else {
+                   runtime.replaySpace
+                     .checkReplayData()
+                     .attempt
+                     .flatMap {
+                       case Right(_) => none[ReplayFailure].pure[F]
+                       case Left(ex: ReplayException) =>
+                         (none[DeployData], UnusedCommEvent(ex): Failed).some
+                           .pure[F]
+                       case Left(ex) =>
+                         (none[DeployData], UserErrors(Vector(ex)): Failed).some
+                           .pure[F]
+                     }
+                 }
+             }
+    } yield cont
   }
 
   private[this] def doInj(
