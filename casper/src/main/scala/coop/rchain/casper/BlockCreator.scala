@@ -24,6 +24,10 @@ import coop.rchain.shared.{Cell, Log, Time}
 object BlockCreator {
   private[this] val CreateBlockMetricsSource =
     Metrics.Source(CasperMetricsSource, "create-block")
+  private[this] val ExtractDeployskMetricsSource =
+    Metrics.Source(CasperMetricsSource, "extract-deploys")
+  private[this] val ProcessDeploysAndCreateBlockMetricsSource =
+    Metrics.Source(CasperMetricsSource, "process-deploys-create-block")
 
   /*
    * Overview of createBlock
@@ -54,11 +58,15 @@ object BlockCreator {
   ): F[CreateBlockStatus] =
     spanF.trace(CreateBlockMetricsSource, parentTraceId) { implicit traceId =>
       for {
+        _                     <- spanF.mark("before-estimator")
         tipHashes             <- Estimator.tips[F](dag, genesis, traceId)
         _                     <- spanF.mark("after-estimator")
         parentMetadatas       <- EstimatorHelper.chooseNonConflicting[F](tipHashes, dag)
+        _                     <- spanF.mark(s"after-parents-${parentMetadatas.length}")
         maxBlockNumber        = ProtoUtil.maxBlockNumberMetadata(parentMetadatas)
+        _                     <- spanF.mark("after-max-block-number")
         invalidLatestMessages <- ProtoUtil.invalidLatestMessages[F](dag)
+        _                     <- spanF.mark("after-invalid-latest-messages")
         slashingDeploys <- invalidLatestMessages.values.toList.traverse { invalidBlockHash =>
                             val encodedInvalidBlockHash =
                               Base16.encode(invalidBlockHash.toByteArray)
@@ -76,16 +84,27 @@ object BlockCreator {
                               sec = privateKey
                             )
                           }
+        _ <- spanF.mark("after-slashing-deploys")
         _ <- Cell[F, CasperState].modify { s =>
               s.copy(deployHistory = s.deployHistory ++ slashingDeploys)
             }
-        _                <- updateDeployHistory[F](state, maxBlockNumber)
-        deploys          <- extractDeploys[F](dag, parentMetadatas, maxBlockNumber, expirationThreshold)
+        _ <- updateDeployHistory[F](state, maxBlockNumber)
+        _ <- spanF.mark("after-update-deploy-history")
+        deploys <- extractDeploys[F](
+                    dag,
+                    parentMetadatas,
+                    maxBlockNumber,
+                    expirationThreshold,
+                    traceId
+                  )
+        _                <- spanF.mark(s"after-deploys-${deploys.length}")
         parents          <- parentMetadatas.toList.traverse(p => ProtoUtil.getBlock[F](p.blockHash))
         justifications   <- computeJustifications[F](dag, parents)
+        _                <- spanF.mark("after-justifications")
         now              <- Time[F].currentMillis
         invalidBlocksSet <- dag.invalidBlocks
         invalidBlocks    = invalidBlocksSet.map(block => (block.blockHash, block.sender)).toMap
+        _                <- spanF.mark("after-invalid-blocks")
         unsignedBlock <- if (deploys.nonEmpty || parents.length > 1) {
                           processDeploysAndCreateBlock[F](
                             dag,
@@ -97,11 +116,13 @@ object BlockCreator {
                             shardId,
                             version,
                             now,
-                            invalidBlocks
+                            invalidBlocks,
+                            traceId
                           )
                         } else {
                           CreateBlockStatus.noNewDeploys.pure[F]
                         }
+        _ <- spanF.mark("after-unsigned-block")
         signedBlock <- unsignedBlock.mapF(
                         signBlock(_, dag, publicKey, privateKey, sigAlgorithm, shardId)
                       )
@@ -136,33 +157,38 @@ object BlockCreator {
   }
 
   // TODO: Remove no longer valid deploys here instead of with lastFinalizedBlock call
-  private def extractDeploys[F[_]: Sync: Log: Time: BlockStore](
+  private def extractDeploys[F[_]: Sync: Log: Time: BlockStore: Span](
       dag: BlockDagRepresentation[F],
       parents: Seq[BlockMetadata],
       maxBlockNumber: Long,
-      expirationThreshold: Int
+      expirationThreshold: Int,
+      parentTraceId: TraceId
   )(implicit state: CasperStateCell[F]): F[Seq[DeployData]] =
-    for {
-      state               <- state.read
-      currentBlockNumber  = maxBlockNumber + 1
-      earliestBlockNumber = currentBlockNumber - expirationThreshold
-      deploys             = state.deployHistory
-      validDeploys = deploys.filter(
-        d => notFutureDeploy(currentBlockNumber, d) && notExpiredDeploy(earliestBlockNumber, d)
-      )
-      result <- DagOperations
-                 .bfTraverseF[F, BlockMetadata](parents.toList)(
-                   b =>
-                     ProtoUtil
-                       .getParentMetadatasAboveBlockNumber[F](b, earliestBlockNumber, dag)
-                 )
-                 .foldLeftF(validDeploys) { (deploys, blockMetadata) =>
-                   for {
-                     block        <- ProtoUtil.getBlock[F](blockMetadata.blockHash)
-                     blockDeploys = ProtoUtil.deploys(block).flatMap(_.deploy)
-                   } yield deploys -- blockDeploys
-                 }
-    } yield result.toSeq
+    Span[F].trace(ExtractDeployskMetricsSource, parentTraceId) { implicit traceId =>
+      for {
+        state               <- state.read
+        currentBlockNumber  = maxBlockNumber + 1
+        earliestBlockNumber = currentBlockNumber - expirationThreshold
+        deploys             = state.deployHistory
+        validDeploys = deploys.filter(
+          d => notFutureDeploy(currentBlockNumber, d) && notExpiredDeploy(earliestBlockNumber, d)
+        )
+        _ <- Span[F].mark("before-deploys-in-current-chain")
+        result <- DagOperations
+                   .bfTraverseF[F, BlockMetadata](parents.toList)(
+                     b =>
+                       ProtoUtil
+                         .getParentMetadatasAboveBlockNumber[F](b, earliestBlockNumber, dag)
+                   )
+                   .foldLeftF(validDeploys) { (deploys, blockMetadata) =>
+                     for {
+                       block        <- ProtoUtil.getBlock[F](blockMetadata.blockHash)
+                       blockDeploys = ProtoUtil.deploys(block).flatMap(_.deploy)
+                     } yield deploys -- blockDeploys
+                   }
+        _ <- Span[F].mark("after-deploys-in-current-chain")
+      } yield result.toSeq
+    }
 
   private def notExpiredDeploy(earliestBlockNumber: Long, d: DeployData): Boolean =
     d.validAfterBlockNumber > earliestBlockNumber
@@ -197,46 +223,49 @@ object BlockCreator {
       shardId: String,
       version: Long,
       now: Long,
-      invalidBlocks: Map[BlockHash, Validator]
-  )(implicit traceId: TraceId): F[CreateBlockStatus] =
-    InterpreterUtil
-      .computeDeploysCheckpoint[F](
-        parents,
-        deploys,
-        dag,
-        runtimeManager,
-        BlockData(now, maxBlockNumber + 1),
-        invalidBlocks
-      )
-      .flatMap {
-        case Left(ex) =>
-          Log[F]
-            .error(
-              s"Critical error encountered while processing deploys: ${ex.getMessage}"
-            )
-            .map(_ => CreateBlockStatus.internalDeployError(ex))
+      invalidBlocks: Map[BlockHash, Validator],
+      parentTraceId: TraceId
+  ): F[CreateBlockStatus] =
+    Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource, parentTraceId) { implicit traceId =>
+      InterpreterUtil
+        .computeDeploysCheckpoint[F](
+          parents,
+          deploys,
+          dag,
+          runtimeManager,
+          BlockData(now, maxBlockNumber + 1),
+          invalidBlocks
+        )
+        .flatMap {
+          case Left(ex) =>
+            Log[F]
+              .error(
+                s"Critical error encountered while processing deploys: ${ex.getMessage}"
+              )
+              .map(_ => CreateBlockStatus.internalDeployError(ex))
 
-        case Right((preStateHash, postStateHash, processedDeploys)) =>
-          val (internalErrors, persistableDeploys) =
-            processedDeploys.partition(_.status.isInternalError)
-          logInternalErrors(internalErrors) >>
-            runtimeManager
-              .computeBonds(postStateHash)
-              .map { newBonds =>
-                createBlock(
-                  now,
-                  parents,
-                  justifications,
-                  maxBlockNumber,
-                  preStateHash,
-                  postStateHash,
-                  persistableDeploys,
-                  newBonds,
-                  shardId,
-                  version
-                )
-              }
-      }
+          case Right((preStateHash, postStateHash, processedDeploys)) =>
+            val (internalErrors, persistableDeploys) =
+              processedDeploys.partition(_.status.isInternalError)
+            logInternalErrors(internalErrors) >>
+              runtimeManager
+                .computeBonds(postStateHash)
+                .map { newBonds =>
+                  createBlock(
+                    now,
+                    parents,
+                    justifications,
+                    maxBlockNumber,
+                    preStateHash,
+                    postStateHash,
+                    persistableDeploys,
+                    newBonds,
+                    shardId,
+                    version
+                  )
+                }
+        }
+    }
 
   private def logInternalErrors[F[_]: Sync: Log](
       internalErrors: Seq[InternalProcessedDeploy]

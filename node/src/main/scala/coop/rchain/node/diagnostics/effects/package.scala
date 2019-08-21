@@ -98,6 +98,9 @@ package object effects {
               }
         } yield r
 
+      override def noop[A](source: Source, parentId: TraceId)(block: TraceId => F[A]): F[A] =
+        Sync[F].defer(block(parentId))
+
       override def withMarks[A](label: String)(block: F[A])(implicit traceId: TraceId): F[A] =
         Sync[F].bracketCase(
           mark(s"started-$label")

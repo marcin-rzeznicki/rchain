@@ -2,7 +2,9 @@ package coop.rchain.rholang.interpreter
 
 import cats.effect._
 import cats.implicits._
+
 import coop.rchain.crypto.hash.Blake2b512Random
+import coop.rchain.metrics.Span
 import coop.rchain.metrics.Span.TraceId
 import coop.rchain.rholang.interpreter.accounting._
 
@@ -36,6 +38,7 @@ object Interpreter {
 
   implicit def interpreter[F[_]](
       implicit S: Sync[F],
+      span: Span[F],
       C: _cost[F]
   ): Interpreter[F] =
     new Interpreter[F] {
@@ -73,14 +76,19 @@ object Interpreter {
         for {
           _           <- C.set(initialPhlo)
           parseResult <- charge[F](parsingCost).attempt
+          _           <- Span[F].mark("after-charge")
           res <- parseResult match {
                   case Right(_) =>
                     ParBuilder[F].buildNormalizedTerm(term, normalizerEnv).attempt.flatMap {
                       case Right(parsed) =>
                         for {
+                          _         <- Span[F].mark("after-normalized-term")
                           result    <- reducer.inj(parsed).attempt
+                          _         <- Span[F].mark("after-reducer-inj")
                           phlosLeft <- C.inspect(identity)
+                          _         <- Span[F].mark("after-phlos-left")
                           oldErrors <- errorLog.readAndClearErrorVector()
+                          _         <- Span[F].mark("after-old-errors")
                           newErrors = result.swap.toSeq.toVector
                           allErrors = oldErrors |+| newErrors
                         } yield EvaluateResult(initialPhlo - phlosLeft, allErrors)

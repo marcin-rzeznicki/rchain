@@ -157,7 +157,9 @@ object RholangCLI {
 
   @tailrec
   @SuppressWarnings(Array("org.wartremover.warts.Return"))
-  def repl(runtime: Runtime[Task])(implicit scheduler: Scheduler, traceId: TraceId): Unit = {
+  def repl(
+      runtime: Runtime[Task]
+  )(implicit span: Span[Task], scheduler: Scheduler, traceId: TraceId): Unit = {
     printPrompt()
     Option(scala.io.StdIn.readLine()) match {
       case Some(line) =>
@@ -176,7 +178,8 @@ object RholangCLI {
       quiet: Boolean,
       unmatchedSendsOnly: Boolean
   )(
-      implicit scheduler: Scheduler,
+      implicit span: Span[Task],
+      scheduler: Scheduler,
       traceId: TraceId
   ): Try[Unit] = {
     val processTerm: Par => Try[Unit] =
@@ -199,7 +202,10 @@ object RholangCLI {
 
   }
 
-  def evaluate(runtime: Runtime[Task], source: String)(implicit traceId: TraceId): Task[Unit] = {
+  def evaluate(
+      runtime: Runtime[Task],
+      source: String
+  )(implicit span: Span[Task], traceId: TraceId): Task[Unit] = {
     implicit val c = runtime.cost
     Interpreter[Task].evaluate(runtime, source, NormalizerEnv.Empty).map {
       case EvaluateResult(_, Vector()) =>
@@ -261,7 +267,7 @@ object RholangCLI {
       unmatchedSendsOnly: Boolean
   )(
       par: Par
-  )(implicit scheduler: Scheduler, traceId: TraceId): Try[Unit] = {
+  )(implicit span: Span[Task], scheduler: Scheduler, traceId: TraceId): Try[Unit] = {
     val evaluatorTask =
       for {
         _ <- Task.delay(if (!quiet) {

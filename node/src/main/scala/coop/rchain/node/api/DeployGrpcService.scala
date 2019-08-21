@@ -41,7 +41,6 @@ private[api] object DeployGrpcService {
         Task
           .defer(task.toTask)
           .executeOn(worker)
-          .executeWithOptions(TaskContrib.enableTracing(tracing))
           .attemptAndLog
           .attempt
           .map(_.fold(_.asLeft[A].toGrpcEither, _.toGrpcEither))
@@ -50,7 +49,6 @@ private[api] object DeployGrpcService {
         Task
           .defer(task.toTask)
           .executeOn(worker)
-          .executeWithOptions(TaskContrib.enableTracing(tracing))
           .attemptAndLog
           .attempt
           .map(_.fold(t => List(t.asLeft[A].toGrpcEither), _.map(_.asRight[String].toGrpcEither)))

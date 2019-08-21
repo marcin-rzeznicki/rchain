@@ -46,7 +46,6 @@ private[rspace] trait SpaceMatcher[F[_], C, P, A, K] extends ISpace[F, C, P, A, 
       traceId: TraceId
   ): F[Option[MatchingDataCandidate]] =
     for {
-      _ <- spanF.mark(findSpanLabel)
       res <- data match {
               case (indexedDatum @ (Datum(matchCandidate, persist, produceRef), dataIndex)) +: remaining =>
                 m.get(pattern, matchCandidate).flatMap {
@@ -79,7 +78,6 @@ private[rspace] trait SpaceMatcher[F[_], C, P, A, K] extends ISpace[F, C, P, A, 
       acc: Seq[Option[DataCandidate[C, A]]]
   )(implicit m: Match[F, P, A], traceId: TraceId): F[Seq[Option[DataCandidate[C, A]]]] =
     for {
-      _ <- spanF.mark(extractSpanLabel)
       res <- channelPatternPairs match {
               case (channel, pattern) +: tail =>
                 for {
@@ -116,7 +114,6 @@ private[rspace] trait SpaceMatcher[F[_], C, P, A, K] extends ISpace[F, C, P, A, 
       channelToIndexedData: Map[C, Seq[(Datum[A], Int)]]
   )(implicit m: Match[F, P, A], traceId: TraceId): F[Option[ProduceCandidate[C, P, A, K]]] =
     for {
-      _ <- spanF.mark(extractFirstSpanLabel)
       res <- matchCandidates match {
               case (p @ WaitingContinuation(patterns, _, _, _, _), index) +: remaining =>
                 for {

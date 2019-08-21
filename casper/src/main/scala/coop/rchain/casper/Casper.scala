@@ -100,7 +100,7 @@ sealed abstract class MultiParentCasperInstances {
       shardId: String,
       parentTraceId: TraceId
   )(implicit runtimeManager: RuntimeManager[F]): F[MultiParentCasper[F]] =
-    Span[F].trace(genesisLabel, parentTraceId) { implicit traceId =>
+    Span[F].noop(genesisLabel, parentTraceId) { implicit traceId =>
       for {
         dag <- BlockDagStorage[F].getRepresentation
         maybePostGenesisStateHash <- InterpreterUtil

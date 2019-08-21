@@ -191,54 +191,41 @@ object Validate {
       expirationThreshold: Int
   )(implicit traceId: TraceId): F[Either[BlockStatus, ValidBlock]] =
     for {
-      _                 <- Span[F].mark("before-block-hash-validation")
       blockHashStatus   <- Validate.blockHash[F](block)
-      _                 <- Span[F].mark("before-deploy-count-validation")
       deployCountStatus <- blockHashStatus.traverse(_ => Validate.deployCount[F](block))
-      _                 <- Span[F].mark("before-missing-blocks-validation")
       missingBlockStatus <- deployCountStatus.joinRight.traverse(
                              _ => Validate.missingBlocks[F](block, dag)
                            )
-      _ <- Span[F].mark("before-timestamp-validation")
       timestampStatus <- missingBlockStatus.joinRight.traverse(
                           _ => Validate.timestamp[F](block, dag)
                         )
-      _ <- Span[F].mark("before-repeat-deploy-validation")
       repeatedDeployStatus <- timestampStatus.joinRight.traverse(
                                _ => Validate.repeatDeploy[F](block, dag, expirationThreshold)
                              )
-      _ <- Span[F].mark("before-block-number-validation")
       blockNumberStatus <- repeatedDeployStatus.joinRight.traverse(
                             _ => Validate.blockNumber[F](block, dag)
                           )
-      _ <- Span[F].mark("before-future-transaction-validation")
       futureTransactionStatus <- blockNumberStatus.joinRight.traverse(
                                   _ => Validate.futureTransaction[F](block)
                                 )
-      _ <- Span[F].mark("before-transaction-expired-validation")
       transactionExpirationStatus <- futureTransactionStatus.joinRight.traverse(
                                       _ =>
                                         Validate
                                           .transactionExpiration[F](block, expirationThreshold)
                                     )
-      _ <- Span[F].mark("before-justification-follows-validation")
       followsStatus <- transactionExpirationStatus.joinRight.traverse(
                         _ => Validate.justificationFollows[F](block, genesis, dag)
                       )
-      _ <- Span[F].mark("before-parents-validation")
       parentsStatus <- followsStatus.joinRight.traverse(
                         _ => Validate.parents[F](block, genesis, dag)
                       )
-      _ <- Span[F].mark("before-sequence-number-validation")
       sequenceNumberStatus <- parentsStatus.joinRight.traverse(
                                _ => Validate.sequenceNumber[F](block, dag)
                              )
-      _ <- Span[F].mark("before-justification-regression-validation")
       justificationRegressionsStatus <- sequenceNumberStatus.joinRight.traverse(
                                          _ =>
                                            Validate.justificationRegressions[F](block, genesis, dag)
                                        )
-      _ <- Span[F].mark("before-shrad-identifier-validation")
       shardIdentifierStatus <- justificationRegressionsStatus.joinRight.traverse(
                                 _ => Validate.shardIdentifier[F](block, shardId)
                               )
@@ -480,7 +467,7 @@ object Validate {
     } yield status
 
   // Agnostic of justifications
-  def shardIdentifier[F[_]: Monad: Log: BlockStore](
+  def shardIdentifier[F[_]: Monad: Log](
       b: BlockMessage,
       shardId: String
   ): F[Either[InvalidBlock, ValidBlock]] =

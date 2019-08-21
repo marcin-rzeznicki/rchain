@@ -42,6 +42,8 @@ import storage.StoragePrinter
 private[api] class ReplGrpcService(runtime: Runtime[Task], worker: Scheduler)
     extends ReplGrpcMonix.Repl {
 
+  implicit private val span = Span.noop[Task]
+
   def exec(source: String, printUnmatchedSendsOnly: Boolean = false): Task[ReplResponse] =
     ParBuilder[Task]
       .buildNormalizedTerm(source, NormalizerEnv.Empty)

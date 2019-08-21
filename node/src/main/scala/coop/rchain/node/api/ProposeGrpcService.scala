@@ -34,7 +34,6 @@ private[api] object ProposeGrpcService {
         Task
           .defer(task.toTask)
           .executeOn(worker)
-          .executeWithOptions(TaskContrib.enableTracing(tracing))
           .attemptAndLog
           .attempt
           .map(_.fold(_.asLeft[A].toGrpcEither, _.toGrpcEither))

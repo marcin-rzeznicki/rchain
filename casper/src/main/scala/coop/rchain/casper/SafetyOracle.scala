@@ -77,15 +77,13 @@ sealed abstract class SafetyOracleInstances {
           blockDag: BlockDagRepresentation[F],
           candidateBlockHash: BlockHash,
           parentTraceId: TraceId
-      ): F[Float] = Span[F].trace(SafetyOracleMetricsSource, parentTraceId) { implicit traceId =>
+      ): F[Float] = Span[F].noop(SafetyOracleMetricsSource, parentTraceId) { implicit traceId =>
         for {
           totalWeight <- computeTotalWeight(blockDag, candidateBlockHash)
-          _           <- Span[F].mark("total-weight")
           agreeingValidatorToWeight <- computeAgreeingValidatorToWeight(
                                         blockDag,
                                         candidateBlockHash
                                       )
-          _ <- Span[F].mark("agreeing-validator-to-weight")
           maxCliqueWeight <- if (2L * agreeingValidatorToWeight.values.sum < totalWeight) {
                               0L.pure[F]
                             } else {
@@ -95,7 +93,6 @@ sealed abstract class SafetyOracleInstances {
                                 agreeingValidatorToWeight
                               )
                             }
-          _ <- Span[F].mark("max-clique-weight")
 
           faultTolerance = 2 * maxCliqueWeight - totalWeight
         } yield faultTolerance.toFloat / totalWeight

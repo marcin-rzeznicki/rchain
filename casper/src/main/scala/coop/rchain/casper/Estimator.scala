@@ -35,10 +35,9 @@ object Estimator {
       genesis: BlockMessage,
       parentTraceId: TraceId
   ): F[IndexedSeq[BlockHash]] =
-    Span[F].trace(Tips0MetricsSource, parentTraceId) { implicit traceId =>
+    Span[F].noop(Tips0MetricsSource, parentTraceId) { implicit traceId =>
       for {
         latestMessageHashes <- dag.latestMessageHashes
-        _                   <- Span[F].mark("latest-message-hashes")
         result              <- Estimator.tips[F](dag, genesis, latestMessageHashes, traceId)
       } yield result
     }
@@ -51,7 +50,7 @@ object Estimator {
       genesis: BlockMessage,
       latestMessagesHashes: Map[Validator, BlockHash],
       parentTraceId: TraceId
-  ): F[IndexedSeq[BlockHash]] = Span[F].trace(Tips1MetricsSource, parentTraceId) {
+  ): F[IndexedSeq[BlockHash]] = Span[F].noop(Tips1MetricsSource, parentTraceId) {
     implicit traceId =>
       for {
         invalidLatestMessages        <- ProtoUtil.invalidLatestMessages[F](dag, latestMessagesHashes)
@@ -61,9 +60,7 @@ object Estimator {
                 BlockMetadata.fromBlock(genesis, false),
                 filteredLatestMessagesHashes
               )
-        _         <- Span[F].mark("lca")
         scoresMap <- buildScoresMap(dag, filteredLatestMessagesHashes, lca)
-        _         <- Span[F].mark("score-map")
         scoresMapString = scoresMap
           .map {
             case (blockHash, score) => s"${PrettyPrinter.buildString(blockHash)}: $score"
@@ -71,7 +68,6 @@ object Estimator {
           .mkString(", ")
         _                          <- Log[F].info(s"The scores map is $scoresMapString")
         rankedLatestMessagesHashes <- rankForkchoices(List(lca), dag, scoresMap)
-        _                          <- Span[F].mark("ranked-latest-messages-hashes")
       } yield rankedLatestMessagesHashes
   }
 

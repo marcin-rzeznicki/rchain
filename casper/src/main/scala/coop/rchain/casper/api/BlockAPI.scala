@@ -45,7 +45,7 @@ object BlockAPI {
   def deploy[F[_]: Monad: EngineCell: Log: Span](
       d: DeployData,
       parentTraceId: TraceId
-  ): Effect[F, DeployServiceResponse] = Span[F].trace(DeploySource, parentTraceId) { _ =>
+  ): Effect[F, DeployServiceResponse] = Span[F].noop(DeploySource, parentTraceId) { _ =>
     def casperDeploy(casper: MultiParentCasper[F]): Effect[F, DeployServiceResponse] =
       casper
         .deploy(d)
@@ -71,7 +71,7 @@ object BlockAPI {
       blockApiLock: Semaphore[F],
       parentTraceId: TraceId,
       printUnmatchedSends: Boolean = false
-  ): Effect[F, DeployServiceResponse] = Span[F].trace(CreateBlockSource, parentTraceId) {
+  ): Effect[F, DeployServiceResponse] = Span[F].noop(CreateBlockSource, parentTraceId) {
     implicit traceId =>
       val errorMessage = "Could not create block, casper instance was not available yet."
       EngineCell[F].read >>= (
@@ -387,7 +387,7 @@ object BlockAPI {
   def getBlock[F[_]: Monad: EngineCell: Log: SafetyOracle: BlockStore: Span](
       q: BlockQuery,
       parentTraceId: TraceId
-  ): Effect[F, BlockQueryResponse] = Span[F].trace(GetBlockSource, parentTraceId) {
+  ): Effect[F, BlockQueryResponse] = Span[F].noop(GetBlockSource, parentTraceId) {
     implicit traceId =>
       val errorMessage =
         "Could not get block, casper instance was not available yet."
@@ -541,7 +541,7 @@ object BlockAPI {
       case None             => none[BlockMessage]
     }
 
-  private def addResponse[F[_]: Concurrent](
+  private def addResponse[F[_]: Concurrent: Span](
       status: BlockStatus,
       block: BlockMessage,
       casper: MultiParentCasper[F],
@@ -570,7 +570,7 @@ object BlockAPI {
           .pure[F]
     }
 
-  private def prettyPrintUnmatchedSends[F[_]: Concurrent](
+  private def prettyPrintUnmatchedSends[F[_]: Concurrent: Span](
       casper: MultiParentCasper[F],
       deploys: Seq[DeployData]
   ): F[String] =

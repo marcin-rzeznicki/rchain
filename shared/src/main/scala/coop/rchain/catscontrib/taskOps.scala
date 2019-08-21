@@ -20,7 +20,7 @@ object TaskContrib {
 
     def unsafeRunSyncTracing(tracing: Boolean)(implicit scheduler: Scheduler): A =
       Await.result(
-        task.executeWithOptions(enableTracing(tracing)).runToFuture,
+        task.runToFuture,
         Duration.Inf
       )
 

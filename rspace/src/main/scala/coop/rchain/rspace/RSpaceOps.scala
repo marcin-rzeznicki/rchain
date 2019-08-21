@@ -194,7 +194,7 @@ abstract class RSpaceOps[F[_]: Concurrent: Metrics, C, P, A, K](
       channels: Seq[C],
       patterns: Seq[P],
       continuation: K
-  ): F[Option[(K, Seq[A])]] = spanF.trace(installSpanLabel) {
+  ): F[Option[(K, Seq[A])]] = spanF.noop(installSpanLabel) {
     installLockF(channels) {
       lockedInstall(channels, patterns, continuation)(m, traceId)
     }
@@ -203,7 +203,7 @@ abstract class RSpaceOps[F[_]: Concurrent: Metrics, C, P, A, K](
   def toMap: F[Map[Seq[C], Row[P, A, K]]] = storeAtom.get().toMap
 
   override def reset(root: Blake2b256Hash)(implicit parentTraceId: TraceId): F[Unit] =
-    spanF.trace(resetSpanLabel, parentTraceId) { traceId =>
+    spanF.noop(resetSpanLabel, parentTraceId) { traceId =>
       for {
         nextHistory <- historyRepositoryAtom.get().reset(root)
         _           = historyRepositoryAtom.set(nextHistory)
@@ -230,7 +230,7 @@ abstract class RSpaceOps[F[_]: Concurrent: Metrics, C, P, A, K](
     } yield ()
 
   override def createSoftCheckpoint()(implicit traceId: TraceId): F[SoftCheckpoint[C, P, A, K]] =
-    spanF.trace(createSoftCheckpointSpanLabel, traceId) { _ =>
+    spanF.noop(createSoftCheckpointSpanLabel, traceId) { _ =>
       for {
         cache <- storeAtom.get().snapshot()
         log   = eventLog.take()
@@ -241,7 +241,7 @@ abstract class RSpaceOps[F[_]: Concurrent: Metrics, C, P, A, K](
   override def revertToSoftCheckpoint(
       checkpoint: SoftCheckpoint[C, P, A, K]
   )(implicit traceId: TraceId): F[Unit] =
-    spanF.trace(revertSoftCheckpointSpanLabel, traceId) { _ =>
+    spanF.noop(revertSoftCheckpointSpanLabel, traceId) { _ =>
       implicit val ck: Codec[K] = serializeK.toCodec
       for {
         hotStore <- HotStore.from(checkpoint.cacheSnapshot.cache, historyRepository)

@@ -135,7 +135,7 @@ object CasperLaunch {
                   validatorId,
                   traceId
                 )
-            ).executeWithOptions(TaskContrib.enableTracing(tracing)).forkAndForget.runToFuture
+            ).forkAndForget.runToFuture
             ().pure[F]
           }
       _ <- EngineCell[F].set(new GenesisCeremonyMaster[F](abp))

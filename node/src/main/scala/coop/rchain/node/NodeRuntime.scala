@@ -190,7 +190,7 @@ class NodeRuntime private[node] (
       _ <- log.info("Bringing BlockStore down ...")
       _ <- blockStore.close()
       _ <- log.info("Goodbye.")
-    } yield ()).unsafeRunSyncTracing(conf.kamon.zipkin)(scheduler)
+    } yield ()).unsafeRunSync(scheduler)
 
   def addShutdownHook(servers: Servers, runtime: Runtime[Task], casperRuntime: Runtime[Task])(
       implicit blockStore: BlockStore[Task],

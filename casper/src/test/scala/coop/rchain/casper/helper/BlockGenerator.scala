@@ -51,7 +51,7 @@ object BlockGenerator {
       genesis: BlockMessage,
       dag: BlockDagRepresentation[F],
       runtimeManager: RuntimeManager[F]
-  ): F[(StateHash, Seq[ProcessedDeploy])] = Span[F].trace(GenerateBlockMetricsSource, Span.empty) {
+  ): F[(StateHash, Seq[ProcessedDeploy])] = Span[F].noop(GenerateBlockMetricsSource, Span.empty) {
     _ =>
       for {
         parents <- ProtoUtil.unsafeGetParents[F](b)

@@ -78,6 +78,8 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     Metrics.Source(CasperMetricsSource, "runtime-manager")
   private[this] val replayComputeStateLabel =
     Metrics.Source(RuntimeManagerMetricsSource, "replay-compute-state")
+  private[this] val replayDeployLabel =
+    Metrics.Source(RuntimeManagerMetricsSource, "replay-deploy")
   private[this] val computeStateLabel = Metrics.Source(RuntimeManagerMetricsSource, "compute-state")
   private[this] val computeGenesisLabel =
     Metrics.Source(RuntimeManagerMetricsSource, "compute-genesis")
@@ -106,6 +108,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
   )(implicit traceId: TraceId): F[EvaluateResult] =
     for {
       _      <- runtime.deployParametersRef.set(ProtoUtil.getRholangDeployParams(deploy))
+      _      <- Span[F].mark("after-deploy-parameters-ref-set")
       result <- doInj(deploy, reducer, runtime.errorLog)(runtime.cost, traceId)
     } yield result
 
@@ -119,10 +122,10 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     withRuntimeLock { runtime =>
       Span[F].trace(replayComputeStateLabel, parentTraceId) { implicit traceId =>
         for {
-          _      <- runtime.blockData.set(blockData)
-          _      <- setInvalidBlocks(invalidBlocks, runtime)
-          _      <- Span[F].mark("before-replay-deploys")
-          result <- replayDeploys(runtime, startHash, terms, replayDeploy(runtime))
+          _ <- runtime.blockData.set(blockData)
+          _ <- setInvalidBlocks(invalidBlocks, runtime)
+//          _      <- Span[F].mark("before-replay-deploys")
+          result <- replayDeploys(runtime, startHash, terms, replayDeploy(runtime, traceId))
         } yield result
       }
     }
@@ -136,9 +139,9 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     withRuntimeLock { runtime =>
       Span[F].trace(computeStateLabel, parentTraceId) { implicit traceId =>
         for {
-          _      <- runtime.blockData.set(blockData)
-          _      <- setInvalidBlocks(invalidBlocks, runtime)
-          _      <- Span[F].mark("before-process-deploys")
+          _ <- runtime.blockData.set(blockData)
+          _ <- setInvalidBlocks(invalidBlocks, runtime)
+//          _      <- Span[F].mark("before-process-deploys")
           result <- processDeploys(runtime, startHash, terms, processDeploy(runtime))
         } yield result
       }
@@ -153,8 +156,8 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     withRuntimeLock { runtime =>
       Span[F].trace(computeGenesisLabel, parentTraceId) { implicit traceId =>
         for {
-          _          <- runtime.blockData.set(BlockData(blockTime, 0))
-          _          <- Span[F].mark("before-process-deploys")
+          _ <- runtime.blockData.set(BlockData(blockTime, 0))
+//          _          <- Span[F].mark("before-process-deploys")
           evalResult <- processDeploys(runtime, startHash, terms, processDeploy(runtime))
         } yield (startHash, evalResult._1, evalResult._2)
       }
@@ -268,7 +271,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
                   processDeploy(deploy).map(results :+ _)
                 }
               }
-      _               <- Span[F].mark("before-process-deploys-create-checkpoint")
+//      _               <- Span[F].mark("before-process-deploys-create-checkpoint")
       finalCheckpoint <- runtime.space.createCheckpoint()(traceId)
       finalStateHash  = finalCheckpoint.root
     } yield (finalStateHash.toByteString, res)
@@ -277,12 +280,13 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
       deploy: DeployData
   )(implicit traceId: TraceId): F[InternalProcessedDeploy] = Span[F].withMarks("process-deploy") {
     for {
-      _                            <- Span[F].mark("before-process-deploy-compute-effect")
-      fallback                     <- runtime.space.createSoftCheckpoint()
+//      _                            <- Span[F].mark("before-process-deploy-compute-effect")
+      fallback <- runtime.space.createSoftCheckpoint()
+//      _                            <- Span[F].mark("after-create-soft-fallback-checkpoint")
       evaluateResult               <- computeEffect(runtime, runtime.reducer)(deploy)
       EvaluateResult(cost, errors) = evaluateResult
-      _                            <- Span[F].mark("before-process-deploy-create-soft-checkpoint")
-      checkpoint                   <- runtime.space.createSoftCheckpoint()(traceId)
+//      _                            <- Span[F].mark("before-process-deploy-create-soft-checkpoint")
+      checkpoint <- runtime.space.createSoftCheckpoint()(traceId)
       deployResult = InternalProcessedDeploy(
         deploy,
         Cost.toProto(cost),
@@ -312,52 +316,55 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
       res <- EitherT
               .fromEither[F](result)
               .flatMapF { _ =>
-                Span[F].mark("before-replay-deploys-create-checkpoint") >> runtime.replaySpace
+                runtime.replaySpace
                   .createCheckpoint()(traceId)
                   .map(finalCheckpoint => finalCheckpoint.root.toByteString.asRight[ReplayFailure])
               }
               .value
     } yield res
 
-  private def replayDeploy(runtime: Runtime[F])(
+  private def replayDeploy(runtime: Runtime[F], parentTraceId: TraceId)(
       processedDeploy: InternalProcessedDeploy
-  )(implicit traceId: TraceId): F[Option[ReplayFailure]] = Span[F].withMarks("replay-deploy") {
-    import processedDeploy._
-    for {
-      _                    <- runtime.replaySpace.rig(processedDeploy.deployLog)
-      softCheckpoint       <- runtime.replaySpace.createSoftCheckpoint()(traceId)
-      _                    <- Span[F].mark("before-replay-deploy-compute-effect")
-      replayEvaluateResult <- computeEffect(runtime, runtime.replayReducer)(processedDeploy.deploy)
-      //TODO: compare replay deploy cost to given deploy cost
-      EvaluateResult(_, errors) = replayEvaluateResult
-      _                         <- Span[F].mark("before-replay-deploy-status")
-      cont <- DeployStatus.fromErrors(errors) match {
-               case int: InternalErrors =>
-                 (deploy.some, int: Failed).some.pure[F]
-               case replayStatus =>
-                 if (status.isFailed != replayStatus.isFailed)
-                   (deploy.some, ReplayStatusMismatch(replayStatus, status): Failed).some
-                     .pure[F]
-                 else if (errors.nonEmpty)
-                   runtime.replaySpace.revertToSoftCheckpoint(softCheckpoint)(traceId) >> none[
-                     ReplayFailure
-                   ].pure[F]
-                 else {
-                   runtime.replaySpace
-                     .checkReplayData()
-                     .attempt
-                     .flatMap {
-                       case Right(_) => none[ReplayFailure].pure[F]
-                       case Left(ex: ReplayException) =>
-                         (none[DeployData], UnusedCommEvent(ex): Failed).some
-                           .pure[F]
-                       case Left(ex) =>
-                         (none[DeployData], UserErrors(Vector(ex)): Failed).some
-                           .pure[F]
-                     }
-                 }
-             }
-    } yield cont
+  ): F[Option[ReplayFailure]] = Span[F].trace(replayDeployLabel, parentTraceId) {
+    implicit traceId =>
+      import processedDeploy._
+      for {
+        _              <- runtime.replaySpace.rig(processedDeploy.deployLog)
+        softCheckpoint <- runtime.replaySpace.createSoftCheckpoint()(traceId)
+        _              <- Span[F].mark("before-replay-deploy-compute-effect")
+        replayEvaluateResult <- computeEffect(runtime, runtime.replayReducer)(
+                                 processedDeploy.deploy
+                               )
+        //TODO: compare replay deploy cost to given deploy cost
+        EvaluateResult(_, errors) = replayEvaluateResult
+        _                         <- Span[F].mark("after-replay-deploy-compute-effect")
+        cont <- DeployStatus.fromErrors(errors) match {
+                 case int: InternalErrors =>
+                   (deploy.some, int: Failed).some.pure[F]
+                 case replayStatus =>
+                   if (status.isFailed != replayStatus.isFailed)
+                     (deploy.some, ReplayStatusMismatch(replayStatus, status): Failed).some
+                       .pure[F]
+                   else if (errors.nonEmpty)
+                     runtime.replaySpace.revertToSoftCheckpoint(softCheckpoint)(traceId) >> none[
+                       ReplayFailure
+                     ].pure[F]
+                   else {
+                     runtime.replaySpace
+                       .checkReplayData()
+                       .attempt
+                       .flatMap {
+                         case Right(_) => none[ReplayFailure].pure[F]
+                         case Left(ex: ReplayException) =>
+                           (none[DeployData], UnusedCommEvent(ex): Failed).some
+                             .pure[F]
+                         case Left(ex) =>
+                           (none[DeployData], UserErrors(Vector(ex)): Failed).some
+                             .pure[F]
+                       }
+                   }
+               }
+      } yield cont
   }
 
   private[this] def doInj(

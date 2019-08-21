@@ -8,6 +8,7 @@ import monix.execution.atomic.AtomicLong
 trait Span[F[_]] {
   def mark(name: String)(implicit traceId: TraceId): F[Unit]
   def trace[A](source: Metrics.Source, parentId: TraceId)(block: TraceId => F[A]): F[A]
+  def noop[A](source: Metrics.Source, parentId: TraceId)(block: TraceId => F[A]): F[A]
   def withMarks[A](label: String)(block: F[A])(implicit traceId: TraceId): F[A]
 }
 
@@ -24,6 +25,8 @@ object Span {
 final case class NoopSpan[F[_]: Applicative]() extends Span[F] {
   override def mark(name: String)(implicit traceId: TraceId): F[Unit] = ().pure[F]
   def trace[A](source: Metrics.Source, parentId: TraceId)(block: TraceId => F[A]): F[A] =
+    block(parentId)
+  def noop[A](source: Metrics.Source, parentId: TraceId)(block: TraceId => F[A]): F[A] =
     block(parentId)
   override def withMarks[A](label: String)(block: F[A])(implicit traceId: TraceId): F[A] = block
 }

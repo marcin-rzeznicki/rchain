@@ -388,7 +388,6 @@ lazy val rholang = (project in file("rholang"))
       "-language:existentials",
       "-language:higherKinds",
       "-Yno-adapted-args",
-      "-Xfatal-warnings",
       "-Xlint:_,-missing-interpolator" // disable "possible missing interpolator" warning
     ),
     publishArtifact in (Compile, packageDoc) := false,
@@ -453,7 +452,6 @@ lazy val rspace = (project in file("rspace"))
   .settings(commonSettings: _*)
   .settings(
     scalacOptions ++= Seq(
-      "-Xfatal-warnings"
     ),
     Defaults.itSettings,
     name := "rspace",

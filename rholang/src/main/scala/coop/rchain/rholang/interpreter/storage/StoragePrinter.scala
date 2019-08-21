@@ -62,7 +62,7 @@ object StoragePrinter {
         PrettyPrinter().buildString(unmatchedSends.reduce(_ ++ _))
     }
 
-  def prettyPrintUnmatchedSends[F[_]: Concurrent](
+  def prettyPrintUnmatchedSends[F[_]: Concurrent: Span](
       deploy: DeployData,
       runtime: Runtime[F]
   ): F[String] = {
@@ -85,7 +85,7 @@ object StoragePrinter {
     }
   }
 
-  def prettyPrintUnmatchedSends[F[_]: Concurrent](
+  def prettyPrintUnmatchedSends[F[_]: Concurrent: Span](
       deploys: Seq[DeployData],
       runtime: Runtime[F]
   ): F[String] =
