@@ -518,7 +518,12 @@ class NodeRuntime private[node] (
         )
     packetHandler = {
       implicit val ev: EngineCell[Task] = engineCell
-      CasperPacketHandler[Task]
+      CasperPacketHandler[Task](
+        Sync[Task],
+        engineCell,
+        log,
+        span
+      )
     }
 
     // 4. run the node program.

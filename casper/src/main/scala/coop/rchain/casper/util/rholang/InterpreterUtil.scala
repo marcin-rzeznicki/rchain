@@ -179,13 +179,13 @@ object InterpreterUtil {
       implicit traceId: TraceId
   ): F[Either[Throwable, (StateHash, StateHash, Seq[InternalProcessedDeploy])]] =
     for {
-      _ <- Span[F].mark("before-compute-deploys-checkpoint")
+//      _ <- Span[F].mark("before-compute-deploys-checkpoint")
       nonEmptyParents <- parents
                           .pure[F]
                           .ensure(new IllegalArgumentException("Parents must not be empty"))(
                             _.nonEmpty
                           )
-      _                    <- Span[F].mark(s"${nonEmptyParents.length}-non-empty-parents")
+//      _                    <- Span[F].mark(s"${nonEmptyParents.length}-non-empty-parents")
       possiblePreStateHash <- computeParentsPostState[F](nonEmptyParents, dag, runtimeManager)
       result <- possiblePreStateHash.flatTraverse { preStateHash =>
                  runtimeManager
@@ -195,7 +195,7 @@ object InterpreterUtil {
                        (preStateHash, postStateHash, processedDeploys).asRight[Throwable]
                    }
                }
-      _ <- Span[F].mark("after-compute-deploys-checkpoint")
+//      _ <- Span[F].mark("after-compute-deploys-checkpoint")
     } yield result
 
   private def computeParentsPostState[F[_]: Sync: BlockStore: Span](
@@ -229,9 +229,9 @@ object InterpreterUtil {
     Span[F].withMarks(ComputeMultiParentsPostStateMetricsSource) {
       for {
         blockHashesToApply <- findMultiParentsBlockHashesForReplay(parents, dag)
-        _                  <- Span[F].mark("after-block-hashes-to-apply")
-        blocksToApply      <- blockHashesToApply.traverse(b => ProtoUtil.getBlock[F](b.blockHash))
-        _                  <- Span[F].mark(s"after-blocks-to-apply-${blocksToApply.length}")
+//        _                  <- Span[F].mark("after-block-hashes-to-apply")
+        blocksToApply <- blockHashesToApply.traverse(b => ProtoUtil.getBlock[F](b.blockHash))
+//        _                  <- Span[F].mark(s"after-blocks-to-apply-${blocksToApply.length}")
         replayResult <- blocksToApply.toList.foldM(Right(initStateHash).leftCast[Throwable]) {
                          (acc, block) =>
                            acc match {
@@ -244,9 +244,9 @@ object InterpreterUtil {
                                val blockNumber = block.body.get.state.get.blockNumber
 
                                for {
-                                 _ <- Span[F].mark(
-                                       s"replay-${deploys.length}-terms-${PrettyPrinter.buildString(block.blockHash)}"
-                                     )
+//                                 _ <- Span[F].mark(
+//                                       s"replay-${deploys.length}-terms-${PrettyPrinter.buildString(block.blockHash)}"
+//                                     )
                                  invalidBlocksSet <- dag.invalidBlocks
                                  unseenBlocksSet  <- ProtoUtil.unseenBlockHashes(dag, block)
                                  seenInvalidBlocksSet = invalidBlocksSet.filterNot(

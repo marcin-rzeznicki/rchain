@@ -76,19 +76,17 @@ object Interpreter {
         for {
           _           <- C.set(initialPhlo)
           parseResult <- charge[F](parsingCost).attempt
-          _           <- Span[F].mark("after-charge")
+//          _           <- Span[F].mark("after-charge")
           res <- parseResult match {
                   case Right(_) =>
                     ParBuilder[F].buildNormalizedTerm(term, normalizerEnv).attempt.flatMap {
                       case Right(parsed) =>
                         for {
-                          _         <- Span[F].mark("after-normalized-term")
-                          result    <- reducer.inj(parsed).attempt
-                          _         <- Span[F].mark("after-reducer-inj")
+                          result    <- Span[F].withMarks("reducer-inj")(reducer.inj(parsed).attempt)
                           phlosLeft <- C.inspect(identity)
-                          _         <- Span[F].mark("after-phlos-left")
+//                          _         <- Span[F].mark("after-phlos-left")
                           oldErrors <- errorLog.readAndClearErrorVector()
-                          _         <- Span[F].mark("after-old-errors")
+//                          _         <- Span[F].mark("after-old-errors")
                           newErrors = result.swap.toSeq.toVector
                           allErrors = oldErrors |+| newErrors
                         } yield EvaluateResult(initialPhlo - phlosLeft, allErrors)

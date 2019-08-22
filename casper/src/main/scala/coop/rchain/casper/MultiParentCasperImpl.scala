@@ -97,10 +97,10 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                   handleDoppelganger(b, sender)
                 case None => ().pure[F]
               }
-          _      <- BlockStore[F].put(b)
-          _      <- spanF.mark("block-store-put")
+          _ <- BlockStore[F].put(b)
+//          _      <- spanF.mark("block-store-put")
           status <- internalAddBlock(b, dag)
-          _      <- spanF.mark("block-added-status")
+//          _      <- spanF.mark("block-added-status")
         } yield status
       }
 
@@ -128,7 +128,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
       dag: BlockDagRepresentation[F]
   )(implicit traceId: TraceId): F[BlockStatus] =
     for {
-      _            <- Span[F].mark("internal-add-block")
+//      _            <- Span[F].mark("internal-add-block")
       validFormat  <- Validate.formatOfFields[F](b)
       validSig     <- Validate.blockSignature[F](b)
       validSender  <- Validate.blockSender[F](b, genesis, dag)
@@ -149,7 +149,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                 )
               }
           }
-      _ <- Span[F].mark("attempt-result")
+//      _ <- Span[F].mark("attempt-result")
       _ <- attempt match {
             case MissingBlocks           => ().pure[F]
             case IgnorableEquivocation   => ().pure[F]
@@ -157,11 +157,11 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
             case _ =>
               reAttemptBuffer(updatedDag) // reAttempt for any status that resulted in the adding of the block into the view
           }
-      _         <- Span[F].mark("reattempted-buffer")
+//      _         <- Span[F].mark("reattempted-buffer")
       tipHashes <- estimator(updatedDag)
-      _         <- Span[F].mark("after-estimator")
-      tipHash   = tipHashes.head
-      _         <- Log[F].info(s"New fork-choice tip is block ${PrettyPrinter.buildString(tipHash)}.")
+//      _         <- Span[F].mark("after-estimator")
+      tipHash = tipHashes.head
+      _       <- Log[F].info(s"New fork-choice tip is block ${PrettyPrinter.buildString(tipHash)}.")
     } yield attempt
 
   def contains(
@@ -286,11 +286,11 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
       dag: BlockDagRepresentation[F]
   )(implicit traceId: TraceId): F[(BlockStatus, BlockDagRepresentation[F])] =
     for {
-      _ <- Span[F].mark("attempt-add")
+//      _ <- Span[F].mark("attempt-add")
       _ <- Log[F].info(s"Attempting to add Block ${PrettyPrinter.buildString(b.blockHash)} to DAG.")
       postValidationStatus <- Validate
                                .blockSummary[F](b, genesis, dag, shardId, expirationThreshold)
-      _ <- Span[F].mark("post-validation-block-summary")
+//      _ <- Span[F].mark("post-validation-block-summary")
       postTransactionsCheckStatus <- postValidationStatus.traverse(
                                       _ =>
                                         Validate.transactions[F](
@@ -299,11 +299,11 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                                           runtimeManager
                                         )
                                     )
-      _ <- Span[F].mark("transactions-validated")
+//      _ <- Span[F].mark("transactions-validated")
       postBondsCacheStatus <- postTransactionsCheckStatus.joinRight.traverse(
                                _ => Validate.bondsCache[F](b, runtimeManager)
                              )
-      _ <- Span[F].mark("bonds-cache-validated")
+//      _ <- Span[F].mark("bonds-cache-validated")
       s <- Cell[F, CasperState].read
       postNeglectedInvalidBlockStatus <- postBondsCacheStatus.joinRight.traverse(
                                           _ =>
@@ -313,7 +313,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                                                 dag
                                               )
                                         )
-      _ <- Span[F].mark("neglected-invalid-block-validated")
+//      _ <- Span[F].mark("neglected-invalid-block-validated")
       postNeglectedEquivocationCheckStatus <- postNeglectedInvalidBlockStatus.joinRight
                                                .traverse(
                                                  _ =>
@@ -324,16 +324,16 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                                                        genesis
                                                      )
                                                )
-      _ <- Span[F].mark("neglected-equivocation-validated")
+//      _ <- Span[F].mark("neglected-equivocation-validated")
       postEquivocationCheckStatus <- postNeglectedEquivocationCheckStatus.joinRight.traverse(
                                       _ =>
                                         EquivocationDetector
                                           .checkEquivocations[F](s.dependencyDag, b, dag)
                                     )
-      status     = postEquivocationCheckStatus.joinRight.merge
-      _          <- Span[F].mark("equivocation-validated")
+      status = postEquivocationCheckStatus.joinRight.merge
+//      _          <- Span[F].mark("equivocation-validated")
       updatedDag <- addEffects(status, b, dag)
-      _          <- Span[F].mark("effects-added")
+//      _          <- Span[F].mark("effects-added")
     } yield (status, updatedDag)
 
   // TODO: Handle slashing
@@ -478,7 +478,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
 
   private def reAttemptBuffer(dag: BlockDagRepresentation[F])(implicit traceId: TraceId): F[Unit] =
     for {
-      _              <- Span[F].mark("reattempt-buffer")
+//      _              <- Span[F].mark("reattempt-buffer")
       state          <- Cell[F, CasperState].read
       dependencyFree = state.dependencyDag.dependencyFree
       dependencyFreeBlocks = state.blockBuffer
@@ -511,7 +511,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
           } else {
             for {
               _ <- removeAdded(state.dependencyDag, attempts)
-              _ <- Span[F].mark("added-removed")
+//              _ <- Span[F].mark("added-removed")
               _ <- reAttemptBuffer(updatedDag)
             } yield ()
           }

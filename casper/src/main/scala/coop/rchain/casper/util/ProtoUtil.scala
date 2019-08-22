@@ -225,13 +225,14 @@ object ProtoUtil {
       b: BlockMessage
   )(implicit traceId: TraceId): F[List[BlockMessage]] =
     for {
-      _ <- Span[F].mark("before-unsafe-get-parents")
+//      _ <- Span[F].mark("before-unsafe-get-parents")
       result <- ProtoUtil.parentHashes(b).toList.traverse { parentHash =>
-                 Span[F]
-                   .mark(s"unsafe-get-block-${PrettyPrinter.buildString(parentHash)}") >> ProtoUtil
+//                 Span[F]
+//                   .mark(s"unsafe-get-block-${PrettyPrinter.buildString(parentHash)}") >>
+                 ProtoUtil
                    .getBlock[F](parentHash)
                }
-      _ <- Span[F].mark("after-unsafe-get-parents")
+//      _ <- Span[F].mark("after-unsafe-get-parents")
     } yield result
 
   def getParentsMetadata[F[_]: Sync](

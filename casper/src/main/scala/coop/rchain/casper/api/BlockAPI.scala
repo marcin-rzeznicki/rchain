@@ -71,7 +71,7 @@ object BlockAPI {
       blockApiLock: Semaphore[F],
       parentTraceId: TraceId,
       printUnmatchedSends: Boolean = false
-  ): Effect[F, DeployServiceResponse] = Span[F].noop(CreateBlockSource, parentTraceId) {
+  ): Effect[F, DeployServiceResponse] = Span[F].trace(CreateBlockSource, parentTraceId) {
     implicit traceId =>
       val errorMessage = "Could not create block, casper instance was not available yet."
       EngineCell[F].read >>= (

@@ -107,8 +107,8 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
       deploy: DeployData
   )(implicit traceId: TraceId): F[EvaluateResult] =
     for {
-      _      <- runtime.deployParametersRef.set(ProtoUtil.getRholangDeployParams(deploy))
-      _      <- Span[F].mark("after-deploy-parameters-ref-set")
+      _ <- runtime.deployParametersRef.set(ProtoUtil.getRholangDeployParams(deploy))
+//      _      <- Span[F].mark("after-deploy-parameters-ref-set")
       result <- doInj(deploy, reducer, runtime.errorLog)(runtime.cost, traceId)
     } yield result
 

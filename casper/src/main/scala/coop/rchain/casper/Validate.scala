@@ -269,12 +269,13 @@ object Validate {
     } yield r.sig).toSet
 
     for {
-      _                   <- Span[F].mark("before-repeat-deploy-get-parents")
-      blockMetadata       = BlockMetadata.fromBlock(block, invalid = false)
-      initParents         <- ProtoUtil.getParentsMetadata[F](blockMetadata, dag)
+//      _                   <- Span[F].mark("before-repeat-deploy-get-parents")
+//      blockMetadata       = BlockMetadata.fromBlock(block, invalid = false)
+      initParents <- ProtoUtil
+                      .getParentsMetadata[F](BlockMetadata.fromBlock(block, invalid = false), dag)
       maxBlockNumber      = ProtoUtil.maxBlockNumberMetadata(initParents)
       earliestBlockNumber = maxBlockNumber + 1 - expirationThreshold
-      _                   <- Span[F].mark("before-repeat-deploy-duplicate-block")
+//      _                   <- Span[F].mark("before-repeat-deploy-duplicate-block")
       maybeDuplicatedBlockMetadata <- DagOperations
                                        .bfTraverseF[F, BlockMetadata](initParents)(
                                          b =>
@@ -295,7 +296,7 @@ object Validate {
                                            d => deployKeySet.contains(d.sig)
                                          )
                                        }
-      _ <- Span[F].mark("before-repeat-deploy-duplicate-block-log")
+//      _ <- Span[F].mark("before-repeat-deploy-duplicate-block-log")
       maybeError <- maybeDuplicatedBlockMetadata
                      .traverse(
                        duplicatedBlockMetadata => {
