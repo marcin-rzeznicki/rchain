@@ -8,6 +8,7 @@ import cats.effect.{Concurrent, ContextShift, Sync}
 import cats.implicits._
 import cats.mtl.FunctorTell
 import cats.temp.par
+
 import com.google.protobuf.ByteString
 import coop.rchain.crypto.hash.Blake2b512Random
 import coop.rchain.metrics.Span.TraceId
@@ -23,8 +24,10 @@ import coop.rchain.rholang.interpreter.errors.SetupError
 import coop.rchain.rholang.interpreter.storage.ChargingRSpace
 import coop.rchain.rspace.{Match, RSpace, _}
 import coop.rchain.shared.Log
-
+import coop.rchain.rholang.RholangMetricsSource
 import scala.concurrent.ExecutionContext
+
+import coop.rchain.metrics.Metrics.Source
 
 class Runtime[F[_]: Sync] private (
     val reducer: Reduce[F],
@@ -46,6 +49,8 @@ class Runtime[F[_]: Sync] private (
 }
 
 object Runtime {
+
+  implicit val RuntimeMetricsSource: Source = Metrics.Source(RholangMetricsSource, "runtime")
 
   type RhoTuplespace[F[_]]   = TCPAK[F, Tuplespace]
   type RhoISpace[F[_]]       = TCPAK[F, ISpace]

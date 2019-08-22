@@ -6,6 +6,8 @@ import cats.effect.concurrent._
 import cats.implicits._
 import cats.mtl._
 import cats.{FlatMap, Monad}
+
+import coop.rchain.metrics.{Metrics, MetricsSemaphore}
 import coop.rchain.rholang.interpreter.errors.OutOfPhlogistonsError
 
 object CostAccounting {
@@ -20,17 +22,20 @@ object CostAccounting {
       .of(Cost(0, "init"))
       .map(defaultMonadState)
 
-  def emptyCost[F[_]: Concurrent](implicit L: FunctorTell[F, Chain[Cost]]): F[_cost[F]] =
+  def emptyCost[F[_]: Concurrent: Metrics](
+      implicit L: FunctorTell[F, Chain[Cost]],
+      ms: Metrics.Source
+  ): F[_cost[F]] =
     for {
-      s <- Semaphore(1)
+      s <- MetricsSemaphore.single
       c <- empty
     } yield (loggingCost(c, L, s))
 
-  def initialCost[F[_]: Concurrent](
+  def initialCost[F[_]: Concurrent: Metrics](
       init: Cost
-  )(implicit L: FunctorTell[F, Chain[Cost]]): F[_cost[F]] =
+  )(implicit L: FunctorTell[F, Chain[Cost]], ms: Metrics.Source): F[_cost[F]] =
     for {
-      s <- Semaphore(1)
+      s <- MetricsSemaphore.single
       c <- of(init)
     } yield (loggingCost(c, L, s))
 
