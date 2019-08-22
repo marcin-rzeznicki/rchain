@@ -1064,7 +1064,7 @@ object BlockDagFileStorage {
                }
     } yield result
 
-  private def loadBlockNumberIndexLmdbStore[F[_]: Sync: Log: RaiseIOError](
+  private def loadBlockNumberIndexLmdbStore[F[_]: Sync: Log: RaiseIOError: Metrics](
       config: Config
   ): F[LMDBStore[F]] =
     for {

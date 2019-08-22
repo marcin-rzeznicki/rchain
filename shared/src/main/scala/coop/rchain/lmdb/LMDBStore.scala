@@ -4,13 +4,19 @@ import java.nio.ByteBuffer
 
 import cats.implicits._
 import cats.effect.Sync
-import coop.rchain.shared.Resources.withResource
-import org.lmdbjava.{CursorIterator, Dbi, Env, Txn}
 
+import coop.rchain.shared.Resources.withResource
+
+import org.lmdbjava.{CursorIterator, Dbi, Env, Txn}
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
+import coop.rchain.metrics.implicits._
 
-final case class LMDBStore[F[_]: Sync](env: Env[ByteBuffer], dbi: Dbi[ByteBuffer]) {
+import coop.rchain.metrics.Metrics
+
+final case class LMDBStore[F[_]: Sync: Metrics](env: Env[ByteBuffer], dbi: Dbi[ByteBuffer])(
+    implicit ms: Metrics.Source
+) {
 
   @SuppressWarnings(Array("org.wartremover.warts.Throw"))
   // TODO stop throwing exceptions
@@ -28,14 +34,18 @@ final case class LMDBStore[F[_]: Sync](env: Env[ByteBuffer], dbi: Dbi[ByteBuffer
     }
 
   def withReadTxnF[R](f: Txn[ByteBuffer] => R): F[R] =
-    Sync[F].delay {
-      withTxn(env.txnRead)(f)
-    }
+    Sync[F]
+      .delay {
+        withTxn(env.txnRead)(f)
+      }
+      .timer("lmdb.read")
 
   def withWriteTxnF[R](f: Txn[ByteBuffer] => R): F[R] =
-    Sync[F].delay {
-      withTxn(env.txnWrite)(f)
-    }
+    Sync[F]
+      .delay {
+        withTxn(env.txnWrite)(f)
+      }
+      .timer("lmdb.write")
 
   def get(key: ByteBuffer): F[Option[ByteBuffer]] =
     withReadTxnF { txn =>
