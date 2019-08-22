@@ -5,9 +5,12 @@ import java.nio.file.Path
 
 import cats.implicits._
 import cats.effect.Sync
+
 import coop.rchain.lmdb.LMDBStore
+import coop.rchain.metrics.Metrics
 import coop.rchain.shared.ByteVectorOps.RichByteVector
 import coop.rchain.rspace.Blake2b256Hash
+
 import org.lmdbjava.DbiFlags.MDB_CREATE
 import org.lmdbjava.{Env, EnvFlags, Txn}
 import scodec.bits.BitVector
@@ -30,7 +33,11 @@ final case class StoreConfig(
 )
 
 object StoreInstances {
-  def lmdbStore[F[_]: Sync](config: StoreConfig): F[Store[F]] =
+
+  def lmdbStore[F[_]: Sync: Metrics](
+      config: StoreConfig,
+      metricsSource: Metrics.Source
+  ): F[Store[F]] =
     for {
       env <- Sync[F].delay {
               Env
@@ -41,7 +48,7 @@ object StoreInstances {
                 .open(config.path.toFile, config.flags: _*)
             }
       dbi   <- Sync[F].delay { env.openDbi("db", MDB_CREATE) }
-      store = LMDBStore(env, dbi)
+      store = LMDBStore(env, dbi)(Sync[F], Metrics[F], metricsSource)
     } yield new Store[F] {
       override def get(key: Blake2b256Hash): F[Option[BitVector]] = {
         val directKey = key.bytes.toDirectByteBuffer

@@ -495,7 +495,7 @@ object RSpace {
         new RSpace[F, C, P, A, K](historyReader, AtomicAny(store), branch)
     }
 
-  def setUp[F[_], C, P, A, K](
+  def setUp[F[_]: Metrics, C, P, A, K](
       dataDir: Path,
       mapSize: Long,
       branch: Branch

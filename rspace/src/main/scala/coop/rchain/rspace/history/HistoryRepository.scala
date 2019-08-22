@@ -3,7 +3,10 @@ package coop.rchain.rspace.history
 import cats.implicits._
 import cats.effect.Sync
 import cats.temp.par.Par
-import coop.rchain.rspace.{Blake2b256Hash, HistoryReader, HotStoreAction}
+
+import coop.rchain.metrics.Metrics
+import coop.rchain.rspace.{Blake2b256Hash, HistoryReader, HotStoreAction, RSpaceMetricsSource}
+
 import org.lmdbjava.EnvFlags
 import scodec.Codec
 
@@ -33,7 +36,14 @@ final case class LMDBRSpaceStorageConfig(
 
 object HistoryRepositoryInstances {
 
-  def lmdbRepository[F[_]: Sync: Par, C, P, A, K](
+  private val RootsStoreMetricsSource: Metrics.Source =
+    Metrics.Source(RSpaceMetricsSource, "roots-store")
+  private val ColdStoreMetricsSource: Metrics.Source =
+    Metrics.Source(RSpaceMetricsSource, "cold-store")
+  private val HistoryStoreMetricsSource: Metrics.Source =
+    Metrics.Source(RSpaceMetricsSource, "history-store")
+
+  def lmdbRepository[F[_]: Sync: Par: Metrics, C, P, A, K](
       config: LMDBRSpaceStorageConfig
   )(
       implicit codecC: Codec[C],
@@ -42,13 +52,14 @@ object HistoryRepositoryInstances {
       codecK: Codec[K]
   ): F[HistoryRepository[F, C, P, A, K]] =
     for {
-      rootsLMDBStore   <- StoreInstances.lmdbStore[F](config.rootsStore)
-      rootsRepository  = new RootRepository[F](RootsStoreInstances.rootsStore[F](rootsLMDBStore))
-      currentRoot      <- rootsRepository.currentRoot()
-      coldLMDBStore    <- StoreInstances.lmdbStore[F](config.coldStore)
-      coldStore        = ColdStoreInstances.coldStore[F](coldLMDBStore)
-      historyLMDBStore <- StoreInstances.lmdbStore[F](config.historyStore)
-      historyStore     = HistoryStoreInstances.historyStore[F](historyLMDBStore)
-      history          = HistoryInstances.merging(currentRoot, historyStore)
+      rootsLMDBStore  <- StoreInstances.lmdbStore[F](config.rootsStore, RootsStoreMetricsSource)
+      rootsRepository = new RootRepository[F](RootsStoreInstances.rootsStore[F](rootsLMDBStore))
+      currentRoot     <- rootsRepository.currentRoot()
+      coldLMDBStore   <- StoreInstances.lmdbStore[F](config.coldStore, ColdStoreMetricsSource)
+      coldStore       = ColdStoreInstances.coldStore[F](coldLMDBStore)
+      historyLMDBStore <- StoreInstances
+                           .lmdbStore[F](config.historyStore, HistoryStoreMetricsSource)
+      historyStore = HistoryStoreInstances.historyStore[F](historyLMDBStore)
+      history      = HistoryInstances.merging(currentRoot, historyStore)
     } yield HistoryRepositoryImpl[F, C, P, A, K](history, rootsRepository, coldStore)
 }
