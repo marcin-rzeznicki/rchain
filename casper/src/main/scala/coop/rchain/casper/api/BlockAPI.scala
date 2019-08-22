@@ -28,6 +28,7 @@ import coop.rchain.rholang.interpreter.storage.StoragePrinter
 import coop.rchain.rspace.StableHashProvider
 import coop.rchain.rspace.trace._
 import coop.rchain.shared.Log
+import coop.rchain.metrics.implicits._
 
 import scala.collection.immutable
 
@@ -67,12 +68,12 @@ object BlockAPI {
     ))
   }
 
-  def createBlock[F[_]: Sync: Concurrent: EngineCell: Log: Span](
+  def createBlock[F[_]: Sync: Concurrent: EngineCell: Log: Metrics: Span](
       blockApiLock: Semaphore[F],
       parentTraceId: TraceId,
       printUnmatchedSends: Boolean = false
-  ): Effect[F, DeployServiceResponse] = Span[F].trace(CreateBlockSource, parentTraceId) {
-    implicit traceId =>
+  ): Effect[F, DeployServiceResponse] =
+    Span[F].trace(CreateBlockSource, parentTraceId) { implicit traceId =>
       val errorMessage = "Could not create block, casper instance was not available yet."
       EngineCell[F].read >>= (
         _.withCasper[ApiErr[DeployServiceResponse]](
@@ -80,20 +81,22 @@ object BlockAPI {
             Sync[F].bracket(blockApiLock.tryAcquire) {
               case true =>
                 for {
+                  _ <- Metrics[F].incrementCounter("create-block")(BlockAPIMetricsSource)
                   maybeBlock <- casper.createBlock
+                                 .timer("create-block-time")(Metrics[F], BlockAPIMetricsSource)
                   result <- maybeBlock match {
                              case err: NoBlock =>
                                s"Error while creating block: $err"
                                  .asLeft[DeployServiceResponse]
                                  .pure[F]
                              case Created(block) =>
-                               casper
+                               (casper
                                  .addBlock(block, ignoreDoppelgangerCheck[F]) >>= (addResponse(
                                  _,
                                  block,
                                  casper,
                                  printUnmatchedSends
-                               ))
+                               ))).timer("add-block-time")(Metrics[F], BlockAPIMetricsSource)
                            }
                 } yield result
               case false =>
@@ -110,7 +113,7 @@ object BlockAPI {
             .as(s"Error: $errorMessage".asLeft)
         )
       )
-  }
+    }
 
   def getListeningNameDataResponse[F[_]: Concurrent: EngineCell: Log: SafetyOracle: BlockStore](
       depth: Int,
