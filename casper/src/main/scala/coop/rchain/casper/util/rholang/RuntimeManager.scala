@@ -120,7 +120,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
       parentTraceId: TraceId
   ): F[Either[ReplayFailure, StateHash]] =
     withRuntimeLock { runtime =>
-      Span[F].trace(replayComputeStateLabel, parentTraceId) { implicit traceId =>
+      Span[F].noop(replayComputeStateLabel, parentTraceId) { implicit traceId =>
         for {
           _ <- runtime.blockData.set(blockData)
           _ <- setInvalidBlocks(invalidBlocks, runtime)

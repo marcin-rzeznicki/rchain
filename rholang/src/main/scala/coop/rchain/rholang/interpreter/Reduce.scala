@@ -2,23 +2,25 @@ package coop.rchain.rholang.interpreter
 
 import java.lang
 
+import scala.collection.immutable.BitSet
+import scala.util.{Random, Try}
+
+import cats.{Eval => _}
 import cats.effect.Sync
 import cats.implicits._
 import cats.mtl.FunctorTell
-import cats.{Eval => _}
-import com.google.protobuf.ByteString
+
 import coop.rchain.crypto.codec.Base16
 import coop.rchain.crypto.hash.Blake2b512Random
-import coop.rchain.metrics.Metrics.Source
+import coop.rchain.metrics.Span
 import coop.rchain.metrics.Span.TraceId
-import coop.rchain.metrics.{Metrics, Span}
+import coop.rchain.models.{Match, MatchCase, _}
 import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
 import coop.rchain.models.Var.VarInstance
-import coop.rchain.models.Var.VarInstance.{BoundVar, FreeVar, Wildcard}
+import coop.rchain.models.Var.VarInstance._
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.models.serialization.implicits._
-import coop.rchain.models.{Match, MatchCase, _}
 import coop.rchain.rholang.interpreter.Runtime.{RhoDispatch, RhoTuplespace}
 import coop.rchain.rholang.interpreter.Substitute.{charge => _, _}
 import coop.rchain.rholang.interpreter.accounting._
@@ -26,6 +28,8 @@ import coop.rchain.rholang.interpreter.errors._
 import coop.rchain.rholang.interpreter.matcher.SpatialMatcher.spatialMatchResult
 import coop.rchain.rspace.Serialize
 import coop.rchain.rspace.util._
+
+import com.google.protobuf.ByteString
 import monix.eval.Coeval
 import scalapb.GeneratedMessage
 import coop.rchain.rholang.RholangMetricsSource
@@ -35,8 +39,7 @@ import scala.collection.immutable.BitSet
 import scala.util.{Random, Try}
 
 object Reduce {
-  val parallelism         = lang.Runtime.getRuntime.availableProcessors() * 2
-  val ReduceMetricsSource = Metrics.Source(RholangMetricsSource, "reduce")
+  val parallelism = lang.Runtime.getRuntime.availableProcessors() * 2
 }
 
 /** Reduce is the interface for evaluating Rholang expressions.
@@ -52,9 +55,8 @@ trait Reduce[M[_]] {
   ): M[Unit]
 
   def inj(
-      par: Par,
-      parentTraceId: TraceId
-  )(implicit rand: Blake2b512Random): M[Unit]
+      par: Par
+  )(implicit rand: Blake2b512Random, traceId: TraceId): M[Unit]
 
   /**
     * Evaluate any top level expressions in @param Par .
@@ -220,21 +222,19 @@ class DebruijnInterpreter[M[_], F[_]](
       sequenceNumber: Int,
       traceId: TraceId
   ): M[Unit] =
-    Span[M].withMarks(s"eval-term-$sequenceNumber-${term.getClass.getSimpleName}") {
-      term match {
-        case term: Send    => reportErrors(eval(term))
-        case term: Receive => reportErrors(eval(term))
-        case term: New     => reportErrors(eval(term))
-        case term: Match   => reportErrors(eval(term))
-        case term: Bundle  => reportErrors(eval(term))
-        case term: Expr =>
-          term.exprInstance match {
-            case e: EVarBody    => reportErrors(eval(e.value.v) >>= (eval(_)))
-            case e: EMethodBody => reportErrors(evalExprToPar(e) >>= (eval(_)))
-            case other          => BugFoundError(s"Undefined term: \n $other").raiseError[M, Unit]
-          }
-        case other => BugFoundError(s"Undefined term: \n $other").raiseError[M, Unit]
-      }
+    term match {
+      case term: Send    => reportErrors(eval(term))
+      case term: Receive => reportErrors(eval(term))
+      case term: New     => reportErrors(eval(term))
+      case term: Match   => reportErrors(eval(term))
+      case term: Bundle  => reportErrors(eval(term))
+      case term: Expr =>
+        term.exprInstance match {
+          case e: EVarBody    => reportErrors(eval(e.value.v) >>= (eval(_)))
+          case e: EMethodBody => reportErrors(evalExprToPar(e) >>= (eval(_)))
+          case other          => BugFoundError(s"Undefined term: \n $other").raiseError[M, Unit]
+        }
+      case other => BugFoundError(s"Undefined term: \n $other").raiseError[M, Unit]
     }
 
   private def reportErrors(process: M[Unit]): M[Unit] =
@@ -244,12 +244,9 @@ class DebruijnInterpreter[M[_], F[_]](
     }
 
   override def inj(
-      par: Par,
-      parentTraceId: TraceId
-  )(implicit rand: Blake2b512Random): M[Unit] =
-    Span[M].trace(Reduce.ReduceMetricsSource, parentTraceId) { traceId =>
-      eval(par)(Env[Par](), rand, 0, traceId)
-    }
+      par: Par
+  )(implicit rand: Blake2b512Random, traceId: TraceId): M[Unit] =
+    spanM.mark(injectSpanLabel) >> eval(par)(Env[Par](), rand, 0, traceId)
 
   /** Algorithm as follows:
     *
