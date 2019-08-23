@@ -31,6 +31,18 @@ private[api] object ProposeGrpcService {
   ): ProposeServiceGrpcMonix.ProposeService =
     new ProposeServiceGrpcMonix.ProposeService {
 
+      implicit private val logTask: Log[Task] =
+        new Log[Task] {
+          def isTraceEnabled(implicit ev: LogSource): Task[Boolean]     = Log[F].isTraceEnabled.toTask
+          def trace(msg: => String)(implicit ev: LogSource): Task[Unit] = Log[F].trace(msg).toTask
+          def debug(msg: => String)(implicit ev: LogSource): Task[Unit] = Log[F].debug(msg).toTask
+          def info(msg: => String)(implicit ev: LogSource): Task[Unit]  = Log[F].info(msg).toTask
+          def warn(msg: => String)(implicit ev: LogSource): Task[Unit]  = Log[F].warn(msg).toTask
+          def error(msg: => String)(implicit ev: LogSource): Task[Unit] = Log[F].error(msg).toTask
+          def error(msg: => String, cause: Throwable)(implicit ev: LogSource): Task[Unit] =
+            Log[F].error(msg, cause).toTask
+        }
+
       private def defer[A <: StacksafeMessage[A]](
           task: F[Either[String, A]]
       ): Task[GrpcEither] =

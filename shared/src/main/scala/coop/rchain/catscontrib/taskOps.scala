@@ -1,11 +1,13 @@
 package coop.rchain.catscontrib
 
 import cats.implicits._
+
 import monix.eval.Task
 import monix.execution.Scheduler
-
 import scala.concurrent.Await
 import scala.concurrent.duration._
+
+import coop.rchain.shared.Log
 
 object TaskContrib {
   def enableTracing(tracing: Boolean): Task.Options => Task.Options =
@@ -25,8 +27,8 @@ object TaskContrib {
       )
 
     // TODO should also push stacktrace to logs (not only console as it is doing right now)
-    def attemptAndLog: Task[A] = task.attempt.flatMap {
-      case Left(ex)      => Task.delay(ex.printStackTrace()) >> Task.raiseError[A](ex)
+    def attemptAndLog(implicit log: Log[Task]): Task[A] = task.attempt.flatMap {
+      case Left(ex)      => log.error(ex.getMessage, ex) >> Task.raiseError[A](ex)
       case Right(result) => Task.pure(result)
     }
 
