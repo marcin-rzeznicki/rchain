@@ -208,6 +208,7 @@ class ReplayRSpace[F[_]: Sync, C, P, A, K](
           }
     } yield r
   }
+
   def produce(channel: C, data: A, persist: Boolean, sequenceNumber: Int): F[MaybeActionResult] =
     contextShift.evalOn(scheduler) {
       for {

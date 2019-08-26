@@ -51,7 +51,11 @@ trait Reduce[M[_]] {
   // TODO: Remove `sequenceNumber` default argument.
   def eval(
       par: Par
-  )(implicit env: Env[Par], rand: Blake2b512Random, sequenceNumber: Int = 0
+  )(
+      implicit env: Env[Par],
+      rand: Blake2b512Random,
+      sequenceNumber: Int = 0,
+      traceId: TraceId
   ): M[Unit]
 
   def inj(

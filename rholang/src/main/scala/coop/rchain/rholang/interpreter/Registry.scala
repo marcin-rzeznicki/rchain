@@ -172,7 +172,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
       sequenceNumber: Int
   )(traceId: TraceId): F[Unit] =
     handleResult(
-      space.produce(chan, ListParWithRandom(Seq(data), rand), false, sequenceNumber)(traceId)
+      space.produce(chan, ListParWithRandom(Seq(data), rand), false, sequenceNumber)
     )(
       traceId
     )
@@ -223,7 +223,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, ret, dataSource), rand),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
       _ <- handleResult(
             space.consume(
@@ -232,7 +232,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(BodyRefs.REG_LOOKUP_CALLBACK)),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
     } yield ()
   }
@@ -253,7 +253,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, value, ret, dataSource), rand),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
       _ <- handleResult(
             space.consume(
@@ -262,7 +262,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(ref)),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
     } yield ()
   }
@@ -316,7 +316,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, ret, dataSource), rand),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
       _ <- handleResult(
             space.consume(
@@ -325,7 +325,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(BodyRefs.REG_DELETE_ROOT_CALLBACK)),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
     } yield ()
   }
@@ -350,7 +350,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(key, ret, dataSource), rand),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
       _ <- handleResult(
             space.produce(
@@ -358,7 +358,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               ListParWithRandom(Seq(parentKey, parentData, parentReplace), parentRand),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
       _ <- handleResult(
             space.consume(
@@ -367,7 +367,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
               TaggedContinuation(ScalaBodyRef(BodyRefs.REG_DELETE_CALLBACK)),
               false,
               sequenceNumber
-            )(traceId)
+            )
           )(traceId)
     } yield ()
   }
@@ -861,7 +861,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       ListParWithRandom(Seq(uri, value, ret), rand),
                       false,
                       sequenceNumber
-                    )(traceId)
+                    )
                   )(traceId)
               _ <- handleResult(
                     space.consume(
@@ -870,7 +870,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       TaggedContinuation(ScalaBodyRef(BodyRefs.REG_REGISTER_INSERT_CALLBACK)),
                       false,
                       sequenceNumber
-                    )(traceId)
+                    )
                   )(traceId)
               _ <- fetchDataInsert(
                     registryRoot,
@@ -921,7 +921,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       ListParWithRandom(Seq(uri, value, ret), rand),
                       false,
                       sequenceNumber
-                    )(traceId)
+                    )
                   )(traceId)
               _ <- handleResult(
                     space.consume(
@@ -930,7 +930,7 @@ class RegistryImpl[F[_]](space: RhoTuplespace[F], dispatcher: RhoDispatch[F])(im
                       TaggedContinuation(ScalaBodyRef(BodyRefs.REG_REGISTER_INSERT_CALLBACK)),
                       false,
                       sequenceNumber
-                    )(traceId)
+                    )
                   )(traceId)
               _ <- fetchDataNonceInsert(
                     registryRoot,

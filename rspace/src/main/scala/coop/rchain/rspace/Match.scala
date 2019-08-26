@@ -10,5 +10,5 @@ import coop.rchain.metrics.Span.TraceId
   */
 trait Match[F[_], P, A] {
 
-  def get(p: P, a: A)(implicit traceId: TraceId): F[Option[A]]
+  def get(p: P, a: A): F[Option[A]]
 }

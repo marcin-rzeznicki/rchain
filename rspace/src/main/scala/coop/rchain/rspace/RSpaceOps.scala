@@ -116,14 +116,13 @@ abstract class RSpaceOps[F[_]: Concurrent: Metrics, C, P, A, K](
     installs
   }
 
-  protected[this] def restoreInstalls(): F[Unit] = spanF.trace(restoreInstallsSpanLabel) {
+  protected[this] def restoreInstalls()(implicit traceId: TraceId): F[Unit] =
     installs.get.toList
       .traverse {
         case (channels, Install(patterns, continuation)) =>
           install(channels, patterns, continuation)
       }
       .as(())
-  }
 
   @SuppressWarnings(Array("org.wartremover.warts.Throw"))
   // TODO stop throwing exceptions
@@ -194,11 +193,10 @@ abstract class RSpaceOps[F[_]: Concurrent: Metrics, C, P, A, K](
       channels: Seq[C],
       patterns: Seq[P],
       continuation: K
-  ): F[Option[(K, Seq[A])]] = spanF.noop(installSpanLabel) {
+  ): F[Option[(K, Seq[A])]] =
     installLockF(channels) {
-      lockedInstall(channels, patterns, continuation)(m, traceId)
+      lockedInstall(channels, patterns, continuation)
     }
-  }
 
   def toMap: F[Map[Seq[C], Row[P, A, K]]] = storeAtom.get().toMap
 

@@ -49,7 +49,7 @@ object ChargingRSpace {
           persist: Boolean,
           sequenceNumber: Int,
           peeks: SortedSet[Int] = SortedSet.empty[Int]
-      )(implicit traceId: TraceId): F[
+      ): F[
         Option[(ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[ListParWithRandom]])]
       ] =
         for {
@@ -69,7 +69,7 @@ object ChargingRSpace {
           channels: Seq[Par],
           patterns: Seq[BindPattern],
           continuation: TaggedContinuation
-      )(implicit traceId: TraceId): F[Option[(TaggedContinuation, Seq[ListParWithRandom])]] =
+      ): F[Option[(TaggedContinuation, Seq[ListParWithRandom])]] =
         space.install(channels, patterns, continuation)
 
       override def produce(
@@ -77,7 +77,7 @@ object ChargingRSpace {
           data: ListParWithRandom,
           persist: Boolean,
           sequenceNumber: Int
-      )(implicit traceId: TraceId): F[
+      ): F[
         Option[(ContResult[Par, BindPattern, TaggedContinuation], Seq[Result[ListParWithRandom]])]
       ] =
         for {

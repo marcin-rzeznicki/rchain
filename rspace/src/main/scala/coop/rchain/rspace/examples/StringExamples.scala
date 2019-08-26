@@ -53,7 +53,7 @@ object StringExamples {
 
     implicit def stringMatch[F[_]: Sync]: Match[F, Pattern, String] =
       new Match[F, Pattern, String] {
-        override def get(p: Pattern, a: String)(implicit traceId: TraceId): F[Option[String]] =
+        override def get(p: Pattern, a: String): F[Option[String]] =
           Sync[F].pure(Some(a).filter(p.isMatch))
       }
 

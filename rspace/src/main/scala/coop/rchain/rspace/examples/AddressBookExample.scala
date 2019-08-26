@@ -166,7 +166,7 @@ object AddressBookExample {
     implicit def matchPatternEntry[F[_]](
         implicit apF: Applicative[F]
     ): Match[F, Pattern, Entry] = new Match[F, Pattern, Entry] {
-      override def get(p: Pattern, a: Entry)(implicit traceId: TraceId): F[Option[Entry]] =
+      override def get(p: Pattern, a: Entry): F[Option[Entry]] =
         p match {
           case NameMatch(last) if a.name.last == last        => apF.pure(Some(a))
           case CityMatch(city) if a.address.city == city     => apF.pure(Some(a))

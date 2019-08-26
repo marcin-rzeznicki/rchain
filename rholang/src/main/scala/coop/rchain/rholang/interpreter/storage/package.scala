@@ -33,7 +33,7 @@ package object storage {
       def get(
           pattern: BindPattern,
           data: ListParWithRandom
-      )(implicit traceId: TraceId): F[Option[ListParWithRandom]] = {
+      ): F[Option[ListParWithRandom]] = {
         type R[A] = MatcherMonadT[F, A]
         implicit val matcherMonadError = implicitly[Sync[R]]
         for {
