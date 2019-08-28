@@ -58,15 +58,15 @@ object BlockCreator {
   ): F[CreateBlockStatus] =
     spanF.trace(CreateBlockMetricsSource, parentTraceId) { implicit traceId =>
       for {
-//        _                     <- spanF.mark("before-estimator")
-        tipHashes <- Estimator.tips[F](dag, genesis, traceId)
-//        _                     <- spanF.mark("after-estimator")
-        parentMetadatas <- EstimatorHelper.chooseNonConflicting[F](tipHashes, dag)
-//        _                     <- spanF.mark(s"after-parents-${parentMetadatas.length}")
-        maxBlockNumber = ProtoUtil.maxBlockNumberMetadata(parentMetadatas)
-//        _                     <- spanF.mark("after-max-block-number")
+        _                     <- spanF.mark("before-estimator")
+        tipHashes             <- Estimator.tips[F](dag, genesis, traceId)
+        _                     <- spanF.mark("after-estimator")
+        parentMetadatas       <- EstimatorHelper.chooseNonConflicting[F](tipHashes, dag)
+        _                     <- spanF.mark(s"after-parents-${parentMetadatas.length}")
+        maxBlockNumber        = ProtoUtil.maxBlockNumberMetadata(parentMetadatas)
+        _                     <- spanF.mark("after-max-block-number")
         invalidLatestMessages <- ProtoUtil.invalidLatestMessages[F](dag)
-//        _                     <- spanF.mark("after-invalid-latest-messages")
+        _                     <- spanF.mark("after-invalid-latest-messages")
         slashingDeploys <- invalidLatestMessages.values.toList.traverse { invalidBlockHash =>
                             val encodedInvalidBlockHash =
                               Base16.encode(invalidBlockHash.toByteArray)
@@ -84,26 +84,26 @@ object BlockCreator {
                               sec = privateKey
                             )
                           }
-//        _ <- spanF.mark("after-slashing-deploys")
+        _ <- spanF.mark("after-slashing-deploys")
         _ <- Cell[F, CasperState].modify { s =>
               s.copy(deployHistory = s.deployHistory ++ slashingDeploys)
             }
         _ <- updateDeployHistory[F](state, maxBlockNumber)
-//        _ <- spanF.mark("after-update-deploy-history")
+        _ <- spanF.mark("after-update-deploy-history")
         deploys <- extractDeploys[F](
                     dag,
                     parentMetadatas,
                     maxBlockNumber,
                     expirationThreshold
                   )
-//        _                <- spanF.mark(s"after-deploys-${deploys.length}")
-        parents        <- parentMetadatas.toList.traverse(p => ProtoUtil.getBlock[F](p.blockHash))
-        justifications <- computeJustifications[F](dag, parents)
-//        _                <- spanF.mark("after-justifications")
+        _                <- spanF.mark(s"after-deploys-${deploys.length}")
+        parents          <- parentMetadatas.toList.traverse(p => ProtoUtil.getBlock[F](p.blockHash))
+        justifications   <- computeJustifications[F](dag, parents)
+        _                <- spanF.mark("after-justifications")
         now              <- Time[F].currentMillis
         invalidBlocksSet <- dag.invalidBlocks
         invalidBlocks    = invalidBlocksSet.map(block => (block.blockHash, block.sender)).toMap
-//        _                <- spanF.mark("after-invalid-blocks")
+        _                <- spanF.mark("after-invalid-blocks")
         unsignedBlock <- if (deploys.nonEmpty || parents.length > 1) {
                           processDeploysAndCreateBlock[F](
                             dag,
@@ -120,11 +120,11 @@ object BlockCreator {
                         } else {
                           CreateBlockStatus.noNewDeploys.pure[F]
                         }
-//        _ <- spanF.mark("after-unsigned-block")
+        _ <- spanF.mark("after-unsigned-block")
         signedBlock <- unsignedBlock.mapF(
                         signBlock(_, dag, publicKey, privateKey, sigAlgorithm, shardId)
                       )
-//        _ <- spanF.mark("block-signed")
+        _ <- spanF.mark("block-signed")
       } yield signedBlock
     }
 

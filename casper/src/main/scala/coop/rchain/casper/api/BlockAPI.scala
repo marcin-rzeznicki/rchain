@@ -2,8 +2,9 @@ package coop.rchain.casper.api
 
 import cats.Monad
 import cats.effect.concurrent.Semaphore
-import cats.effect.{Concurrent, Sync}
+import cats.effect.{Concurrent, ExitCase, Sync}
 import cats.implicits._
+
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.{BlockDagRepresentation, BlockStore}
 import coop.rchain.casper.engine.{EngineCell, _}
@@ -29,7 +30,6 @@ import coop.rchain.rspace.StableHashProvider
 import coop.rchain.rspace.trace._
 import coop.rchain.shared.Log
 import coop.rchain.metrics.implicits._
-
 import scala.collection.immutable
 
 object BlockAPI {
@@ -80,25 +80,31 @@ object BlockAPI {
           casper => {
             Sync[F].bracket(blockApiLock.tryAcquire) {
               case true =>
-                for {
-                  _ <- Metrics[F].incrementCounter("create-block")(BlockAPIMetricsSource)
+                implicit val ms = BlockAPIMetricsSource
+                (for {
+                  _          <- Metrics[F].incrementCounter("propose")
                   maybeBlock <- casper.createBlock
-                                 .timer("create-block-time")(Metrics[F], BlockAPIMetricsSource)
                   result <- maybeBlock match {
                              case err: NoBlock =>
-                               s"Error while creating block: $err"
+                               Metrics[F]
+                                 .incrementCounter("propose-failed") >> s"Error while creating block: $err"
                                  .asLeft[DeployServiceResponse]
                                  .pure[F]
                              case Created(block) =>
-                               (casper
+                               casper
                                  .addBlock(block, ignoreDoppelgangerCheck[F]) >>= (addResponse(
                                  _,
                                  block,
                                  casper,
                                  printUnmatchedSends
-                               ))).timer("add-block-time")(Metrics[F], BlockAPIMetricsSource)
+                               ))
                            }
-                } yield result
+                } yield result).timer("propose-total-time").attempt.flatMap {
+                  case Left(e) =>
+                    Metrics[F].incrementCounter("propose-failed") >> Sync[F]
+                      .raiseError[ApiErr[DeployServiceResponse]](e)
+                  case Right(result) => result.pure[F]
+                }
               case false =>
                 "Error: There is another propose in progress.".asLeft[DeployServiceResponse].pure[F]
             } {

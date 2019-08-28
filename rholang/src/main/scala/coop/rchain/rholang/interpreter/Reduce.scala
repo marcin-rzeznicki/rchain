@@ -250,7 +250,7 @@ class DebruijnInterpreter[M[_], F[_]](
   override def inj(
       par: Par
   )(implicit rand: Blake2b512Random, traceId: TraceId): M[Unit] =
-    spanM.mark(injectSpanLabel) >> eval(par)(Env[Par](), rand, 0, traceId)
+    spanM.withMarks(injectSpanLabel)(eval(par)(Env[Par](), rand, 0, traceId))
 
   /** Algorithm as follows:
     *

@@ -74,6 +74,7 @@ trait MultiParentCasper[F[_]] extends Casper[F, IndexedSeq[BlockHash]] {
 }
 
 object MultiParentCasper extends MultiParentCasperInstances {
+
   def apply[F[_]](implicit instance: MultiParentCasper[F]): MultiParentCasper[F] = instance
   def ignoreDoppelgangerCheck[F[_]: Applicative]: (BlockMessage, Validator) => F[Unit] =
     kp2(().pure[F])
@@ -90,8 +91,9 @@ object MultiParentCasper extends MultiParentCasperInstances {
 }
 
 sealed abstract class MultiParentCasperInstances {
-  implicit private[this] val MetricsSource: Metrics.Source =
+  implicit val MetricsSource: Metrics.Source =
     Metrics.Source(CasperMetricsSource, "casper")
+
   private[this] val genesisLabel = Metrics.Source(MetricsSource, "genesis")
 
   def hashSetCasper[F[_]: Sync: Metrics: Concurrent: ConnectionsCell: TransportLayer: Log: Time: SafetyOracle: LastFinalizedBlockCalculator: BlockStore: RPConfAsk: BlockDagStorage: Span: Running.RequestedBlocks](

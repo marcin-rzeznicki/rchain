@@ -120,7 +120,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
       parentTraceId: TraceId
   ): F[Either[ReplayFailure, StateHash]] =
     withRuntimeLock { runtime =>
-      Span[F].noop(replayComputeStateLabel, parentTraceId) { implicit traceId =>
+      Span[F].trace(replayComputeStateLabel, parentTraceId) { implicit traceId =>
         for {
           _ <- runtime.blockData.set(blockData)
           _ <- setInvalidBlocks(invalidBlocks, runtime)
@@ -188,16 +188,18 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
   }
 
   def computeBonds(hash: StateHash)(implicit traceId: TraceId): F[Seq[Bond]] =
-    captureResults(hash, ConstructDeploy.sourceDeployNow(bondsQuerySource()))(traceId)
-      .ensureOr(
-        bondsPar =>
-          new IllegalArgumentException(
-            s"Incorrect number of results from query of current bonds: ${bondsPar.size}"
-          )
-      )(bondsPar => bondsPar.size == 1)
-      .map { bondsPar =>
-        toBondSeq(bondsPar.head)
-      }
+    Span[F].withMarks("compute-bonds") {
+      captureResults(hash, ConstructDeploy.sourceDeployNow(bondsQuerySource()))(traceId)
+        .ensureOr(
+          bondsPar =>
+            new IllegalArgumentException(
+              s"Incorrect number of results from query of current bonds: ${bondsPar.size}"
+            )
+        )(bondsPar => bondsPar.size == 1)
+        .map { bondsPar =>
+          toBondSeq(bondsPar.head)
+        }
+    }
 
   private def bondsQuerySource(name: String = "__SCALA__"): String =
     s"""
@@ -330,13 +332,13 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     for {
       _              <- runtime.replaySpace.rig(processedDeploy.deployLog)
       softCheckpoint <- runtime.replaySpace.createSoftCheckpoint()(traceId)
-      _              <- Span[F].mark("before-replay-deploy-compute-effect")
+//      _              <- Span[F].mark("before-replay-deploy-compute-effect")
       replayEvaluateResult <- computeEffect(runtime, runtime.replayReducer)(
                                processedDeploy.deploy
                              )
       //TODO: compare replay deploy cost to given deploy cost
       EvaluateResult(_, errors) = replayEvaluateResult
-      _                         <- Span[F].mark("after-replay-deploy-compute-effect")
+//      _                         <- Span[F].mark("after-replay-deploy-compute-effect")
       cont <- DeployStatus.fromErrors(errors) match {
                case int: InternalErrors =>
                  (deploy.some, int: Failed).some.pure[F]

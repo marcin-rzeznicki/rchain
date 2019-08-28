@@ -27,6 +27,7 @@ import coop.rchain.models.EquivocationRecord
 import coop.rchain.models.Validator.Validator
 import coop.rchain.rholang.interpreter.NormalizerEnv
 import coop.rchain.shared._
+import coop.rchain.metrics.implicits._
 
 /**
   Encapsulates mutable state of the MultiParentCasperImpl
@@ -57,6 +58,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
     spanF: Span[F],
     runtimeManager: RuntimeManager[F]
 ) extends MultiParentCasper[F] {
+  import MultiParentCasper.MetricsSource
 
   implicit private val logSource: LogSource = LogSource(this.getClass)
 
@@ -72,7 +74,8 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
   def addBlock(
       b: BlockMessage,
       handleDoppelganger: (BlockMessage, Validator) => F[Unit]
-  )(implicit traceId: TraceId): F[BlockStatus] = internalAddBlock(b, handleDoppelganger, traceId)
+  )(implicit traceId: TraceId): F[BlockStatus] =
+    internalAddBlock(b, handleDoppelganger, traceId).timer("add-block-time")
 
   private def internalAddBlock(
       b: BlockMessage,
@@ -97,10 +100,10 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                   handleDoppelganger(b, sender)
                 case None => ().pure[F]
               }
-          _ <- BlockStore[F].put(b)
-//          _      <- spanF.mark("block-store-put")
+          _      <- BlockStore[F].put(b)
+          _      <- spanF.mark("block-store-put")
           status <- internalAddBlock(b, dag)
-//          _      <- spanF.mark("block-added-status")
+          _      <- spanF.mark("block-added-status")
         } yield status
       }
 
@@ -128,7 +131,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
       dag: BlockDagRepresentation[F]
   )(implicit traceId: TraceId): F[BlockStatus] =
     for {
-//      _            <- Span[F].mark("internal-add-block")
+      _            <- Span[F].mark("internal-add-block")
       validFormat  <- Validate.formatOfFields[F](b)
       validSig     <- Validate.blockSignature[F](b)
       validSender  <- Validate.blockSender[F](b, genesis, dag)
@@ -149,7 +152,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                 )
               }
           }
-//      _ <- Span[F].mark("attempt-result")
+      _ <- Span[F].mark("attempt-result")
       _ <- attempt match {
             case MissingBlocks           => ().pure[F]
             case IgnorableEquivocation   => ().pure[F]
@@ -157,11 +160,11 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
             case _ =>
               reAttemptBuffer(updatedDag) // reAttempt for any status that resulted in the adding of the block into the view
           }
-//      _         <- Span[F].mark("reattempted-buffer")
+      _         <- Span[F].mark("reattempted-buffer")
       tipHashes <- estimator(updatedDag)
-//      _         <- Span[F].mark("after-estimator")
-      tipHash = tipHashes.head
-      _       <- Log[F].info(s"New fork-choice tip is block ${PrettyPrinter.buildString(tipHash)}.")
+      _         <- Span[F].mark("after-estimator")
+      tipHash   = tipHashes.head
+      _         <- Log[F].info(s"New fork-choice tip is block ${PrettyPrinter.buildString(tipHash)}.")
     } yield attempt
 
   def contains(
@@ -231,24 +234,25 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
   )(implicit traceId: TraceId): F[IndexedSeq[BlockHash]] =
     Estimator.tips[F](dag, genesis, traceId)
 
-  def createBlock(implicit traceId: TraceId): F[CreateBlockStatus] = validatorId match {
-    case Some(ValidatorIdentity(publicKey, privateKey, sigAlgorithm)) =>
-      BlockDagStorage[F].getRepresentation.flatMap { dag =>
-        BlockCreator.createBlock(
-          dag,
-          genesis,
-          publicKey,
-          privateKey,
-          sigAlgorithm,
-          shardId,
-          version,
-          expirationThreshold,
-          runtimeManager,
-          traceId
-        )
-      }
-    case None => CreateBlockStatus.readOnlyMode.pure[F]
-  }
+  def createBlock(implicit traceId: TraceId): F[CreateBlockStatus] =
+    (validatorId match {
+      case Some(ValidatorIdentity(publicKey, privateKey, sigAlgorithm)) =>
+        BlockDagStorage[F].getRepresentation.flatMap { dag =>
+          BlockCreator.createBlock(
+            dag,
+            genesis,
+            publicKey,
+            privateKey,
+            sigAlgorithm,
+            shardId,
+            version,
+            expirationThreshold,
+            runtimeManager,
+            traceId
+          )
+        }
+      case None => CreateBlockStatus.readOnlyMode.pure[F]
+    }).timer("create-block-time")
 
   def lastFinalizedBlock(implicit traceId: TraceId): F[BlockMessage] =
     for {
@@ -286,11 +290,11 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
       dag: BlockDagRepresentation[F]
   )(implicit traceId: TraceId): F[(BlockStatus, BlockDagRepresentation[F])] =
     for {
-//      _ <- Span[F].mark("attempt-add")
+      _ <- Span[F].mark("attempt-add")
       _ <- Log[F].info(s"Attempting to add Block ${PrettyPrinter.buildString(b.blockHash)} to DAG.")
       postValidationStatus <- Validate
                                .blockSummary[F](b, genesis, dag, shardId, expirationThreshold)
-//      _ <- Span[F].mark("post-validation-block-summary")
+      _ <- Span[F].mark("post-validation-block-summary")
       postTransactionsCheckStatus <- postValidationStatus.traverse(
                                       _ =>
                                         Validate.transactions[F](
@@ -299,11 +303,11 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                                           runtimeManager
                                         )
                                     )
-//      _ <- Span[F].mark("transactions-validated")
+      _ <- Span[F].mark("transactions-validated")
       postBondsCacheStatus <- postTransactionsCheckStatus.joinRight.traverse(
                                _ => Validate.bondsCache[F](b, runtimeManager)
                              )
-//      _ <- Span[F].mark("bonds-cache-validated")
+      _ <- Span[F].mark("bonds-cache-validated")
       s <- Cell[F, CasperState].read
       postNeglectedInvalidBlockStatus <- postBondsCacheStatus.joinRight.traverse(
                                           _ =>
@@ -313,7 +317,7 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                                                 dag
                                               )
                                         )
-//      _ <- Span[F].mark("neglected-invalid-block-validated")
+      _ <- Span[F].mark("neglected-invalid-block-validated")
       postNeglectedEquivocationCheckStatus <- postNeglectedInvalidBlockStatus.joinRight
                                                .traverse(
                                                  _ =>
@@ -324,16 +328,16 @@ class MultiParentCasperImpl[F[_]: Sync: Concurrent: ConnectionsCell: TransportLa
                                                        genesis
                                                      )
                                                )
-//      _ <- Span[F].mark("neglected-equivocation-validated")
+      _ <- Span[F].mark("neglected-equivocation-validated")
       postEquivocationCheckStatus <- postNeglectedEquivocationCheckStatus.joinRight.traverse(
                                       _ =>
                                         EquivocationDetector
                                           .checkEquivocations[F](s.dependencyDag, b, dag)
                                     )
-      status = postEquivocationCheckStatus.joinRight.merge
-//      _          <- Span[F].mark("equivocation-validated")
+      status     = postEquivocationCheckStatus.joinRight.merge
+      _          <- Span[F].mark("equivocation-validated")
       updatedDag <- addEffects(status, b, dag)
-//      _          <- Span[F].mark("effects-added")
+      _          <- Span[F].mark("effects-added")
     } yield (status, updatedDag)
 
   // TODO: Handle slashing

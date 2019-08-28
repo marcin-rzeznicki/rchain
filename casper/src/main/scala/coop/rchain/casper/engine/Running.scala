@@ -5,6 +5,7 @@ import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, Sync}
 import cats.implicits._
 import cats.{Applicative, Monad}
+
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.{BlockDagStorage, BlockStore}
 import coop.rchain.casper.LastApprovedBlock.LastApprovedBlock
@@ -22,16 +23,16 @@ import coop.rchain.comm.rp.ProtocolHelper.packet
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.comm.transport.{Blob, TransportLayer}
 import coop.rchain.comm.{transport, PeerNode}
-import coop.rchain.metrics.Metrics
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.Validator.Validator
 import coop.rchain.shared.{Cell, Log, LogSource, Time}
 import coop.rchain.catscontrib.Catscontrib
 import Catscontrib._
 import coop.rchain.metrics.Span.TraceId
+
 import monix.eval.Task
 import monix.execution.Scheduler
 import coop.rchain.models.BlockHash.BlockHash
-
 import scala.concurrent.duration._
 import scala.util.Try
 
@@ -238,13 +239,17 @@ object Running {
 
 }
 
-class Running[F[_]: Sync: RPConfAsk: BlockStore: ConnectionsCell: TransportLayer: Log: Time: Running.RequestedBlocks](
+class Running[F[_]: Sync: RPConfAsk: BlockStore: ConnectionsCell: TransportLayer: Log: Span: Time: Running.RequestedBlocks](
     casper: MultiParentCasper[F],
     approvedBlock: ApprovedBlock,
     theInit: F[Unit]
 ) extends Engine[F] {
   import Engine._
   import Running._
+
+  private val RunningMetricsSource = Metrics.Source(CasperMetricsSource, "running")
+  private val HandleBlockMessageMetricsSource =
+    Metrics.Source(RunningMetricsSource, "handle-block-message")
 
   private def casperAdd(peer: PeerNode): TraceId => BlockMessage => F[BlockStatus] = {
     def handleDoppelganger: (BlockMessage, Validator) => F[Unit] =
@@ -255,24 +260,30 @@ class Running[F[_]: Sync: RPConfAsk: BlockStore: ConnectionsCell: TransportLayer
           Log[F].warn(warnMessage)
         } else ().pure[F]
 
-    (traceId: TraceId) => (b: BlockMessage) => casper.addBlock(b, handleDoppelganger)(traceId)
+    parentTraceId =>
+      block =>
+        Span[F].trace(HandleBlockMessageMetricsSource, parentTraceId)(
+          implicit traceId => casper.addBlock(block, handleDoppelganger)
+        )
   }
 
   def applicative: Applicative[F] = Applicative[F]
 
   override def init: F[Unit] = theInit
 
-  override def handle(peer: PeerNode, msg: CasperMessage, traceId: TraceId): F[Unit] = msg match {
-    case b: BlockMessage =>
-      handleBlockMessage[F](peer, b)(casper.contains, casperAdd(peer)(traceId))
-    case br: BlockRequest             => handleBlockRequest[F](peer, br)
-    case hbr: HasBlockRequest         => handleHasBlockRequest[F](peer, hbr)(casper.contains)
-    case hb: HasBlock                 => handleHasBlock[F](peer, hb)(casper.contains)
-    case fctr: ForkChoiceTipRequest   => handleForkChoiceTipRequest[F](peer, fctr)(casper, traceId)
-    case abr: ApprovedBlockRequest    => handleApprovedBlockRequest[F](peer, abr, approvedBlock)
-    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifer)
-    case _                            => noop
-  }
+  override def handle(peer: PeerNode, msg: CasperMessage, traceId: TraceId): F[Unit] =
+    msg match {
+      case b: BlockMessage =>
+        handleBlockMessage[F](peer, b)(casper.contains, casperAdd(peer)(traceId))
+      case br: BlockRequest     => handleBlockRequest[F](peer, br)
+      case hbr: HasBlockRequest => handleHasBlockRequest[F](peer, hbr)(casper.contains)
+      case hb: HasBlock         => handleHasBlock[F](peer, hb)(casper.contains)
+      case fctr: ForkChoiceTipRequest =>
+        handleForkChoiceTipRequest[F](peer, fctr)(casper, traceId)
+      case abr: ApprovedBlockRequest    => handleApprovedBlockRequest[F](peer, abr, approvedBlock)
+      case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifer)
+      case _                            => noop
+    }
 
   override def withCasper[A](
       f: MultiParentCasper[F] => F[A],

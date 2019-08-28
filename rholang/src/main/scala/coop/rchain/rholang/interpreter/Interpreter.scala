@@ -82,7 +82,7 @@ object Interpreter {
                     ParBuilder[F].buildNormalizedTerm(term, normalizerEnv).attempt.flatMap {
                       case Right(parsed) =>
                         for {
-                          result    <- Span[F].withMarks("reducer-inj")(reducer.inj(parsed).attempt)
+                          result    <- reducer.inj(parsed).attempt
                           phlosLeft <- C.inspect(identity)
 //                          _         <- Span[F].mark("after-phlos-left")
                           oldErrors <- errorLog.readAndClearErrorVector()
