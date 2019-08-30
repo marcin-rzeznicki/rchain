@@ -122,9 +122,9 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     withRuntimeLock { runtime =>
       Span[F].trace(replayComputeStateLabel, parentTraceId) { implicit traceId =>
         for {
-          _ <- runtime.blockData.set(blockData)
-          _ <- setInvalidBlocks(invalidBlocks, runtime)
-//          _      <- Span[F].mark("before-replay-deploys")
+          _      <- runtime.blockData.set(blockData)
+          _      <- setInvalidBlocks(invalidBlocks, runtime)
+          _      <- Span[F].mark("before-replay-deploys")
           result <- replayDeploys(runtime, startHash, terms, replayDeploy(runtime, traceId))
         } yield result
       }
@@ -139,9 +139,9 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
     withRuntimeLock { runtime =>
       Span[F].trace(computeStateLabel, parentTraceId) { implicit traceId =>
         for {
-          _ <- runtime.blockData.set(blockData)
-          _ <- setInvalidBlocks(invalidBlocks, runtime)
-//          _      <- Span[F].mark("before-process-deploys")
+          _      <- runtime.blockData.set(blockData)
+          _      <- setInvalidBlocks(invalidBlocks, runtime)
+          _      <- Span[F].mark("before-process-deploys")
           result <- processDeploys(runtime, startHash, terms, processDeploy(runtime))
         } yield result
       }
@@ -273,7 +273,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
                   processDeploy(deploy).map(results :+ _)
                 }
               }
-//      _               <- Span[F].mark("before-process-deploys-create-checkpoint")
+      _               <- Span[F].mark("before-process-deploys-create-checkpoint")
       finalCheckpoint <- runtime.space.createCheckpoint()(traceId)
       finalStateHash  = finalCheckpoint.root
     } yield (finalStateHash.toByteString, res)
@@ -282,13 +282,13 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
       deploy: DeployData
   )(implicit traceId: TraceId): F[InternalProcessedDeploy] = Span[F].withMarks("process-deploy") {
     for {
-//      _                            <- Span[F].mark("before-process-deploy-compute-effect")
-      fallback <- runtime.space.createSoftCheckpoint()
-//      _                            <- Span[F].mark("after-create-soft-fallback-checkpoint")
+      _                            <- Span[F].mark("before-process-deploy-compute-effect")
+      fallback                     <- runtime.space.createSoftCheckpoint()
+      _                            <- Span[F].mark("after-create-soft-fallback-checkpoint")
       evaluateResult               <- computeEffect(runtime, runtime.reducer)(deploy)
       EvaluateResult(cost, errors) = evaluateResult
-//      _                            <- Span[F].mark("before-process-deploy-create-soft-checkpoint")
-      checkpoint <- runtime.space.createSoftCheckpoint()(traceId)
+      _                            <- Span[F].mark("before-process-deploy-create-soft-checkpoint")
+      checkpoint                   <- runtime.space.createSoftCheckpoint()(traceId)
       deployResult = InternalProcessedDeploy(
         deploy,
         Cost.toProto(cost),
@@ -315,6 +315,7 @@ class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span] private[rholang] (
                      replayDeploy(deploy).map(_.toLeft(()))
                    }
                }
+      _ <- Span[F].mark("after-replay-terms")
       res <- EitherT
               .fromEither[F](result)
               .flatMapF { _ =>

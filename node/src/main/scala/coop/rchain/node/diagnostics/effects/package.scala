@@ -89,8 +89,8 @@ package object effects {
                   )
                   .map(_.id)
                   .getOrElse(traceId)
-              }) { traceId =>
-                block(traceId)
+              }) { implicit traceId =>
+                withMarks("trace")(block(traceId))
               } { traceId =>
                 Sync[F]
                   .delay(spans.remove(traceId))

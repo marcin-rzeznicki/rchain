@@ -28,7 +28,7 @@ object TaskContrib {
 
     // TODO should also push stacktrace to logs (not only console as it is doing right now)
     def attemptAndLog(implicit log: Log[Task]): Task[A] = task.attempt.flatMap {
-      case Left(ex)      => log.error(ex.getMessage, ex) >> Task.raiseError[A](ex)
+      case Left(ex)      => Task.delay(ex.printStackTrace()) >> Task.raiseError[A](ex)
       case Right(result) => Task.pure(result)
     }
 
