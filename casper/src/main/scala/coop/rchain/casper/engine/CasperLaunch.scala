@@ -56,9 +56,8 @@ object CasperLaunch {
   ): F[Unit] =
     for {
       validatorId <- ValidatorIdentity.fromConfig[F](init.conf)
-      genesis     = approvedBlock.candidate.flatMap(_.block).get
-      casper <- MultiParentCasper
-                 .hashSetCasper[F](validatorId, genesis, init.conf.shardId)
+      genesis     = approvedBlock.candidate.block
+      casper      <- MultiParentCasper.hashSetCasper[F](validatorId, genesis, init.conf.shardId)
       _ <- Engine
             .transitionToRunning[F](casper, approvedBlock, CommUtil.sendForkChoiceTipRequest[F])
     } yield ()
